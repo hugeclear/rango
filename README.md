@@ -29,9 +29,8 @@ chameleon_prime_personalization/
 │ └── setup_environment.sh
 └── README.md
 
-bash
-コピーする
-編集する
+
+
 
 ## 🛠️ Setup
 
@@ -40,14 +39,10 @@ bash
 bash scripts/setup_environment.sh
 source env/bin/activate
 2. Download base models
-bash
-コピーする
-編集する
+
 python scripts/download_models.py --model mistralai/Mistral-7B-v0.1
 3. Download datasets
-bash
-コピーする
-編集する
+
 python scripts/download_datasets.py --dataset lamp2
 🧩 Method Summary
 Embedding Personalization (Chameleon)
