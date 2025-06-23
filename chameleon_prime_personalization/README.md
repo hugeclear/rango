@@ -34,16 +34,23 @@ Activate the virtual environment:
 source .venv/bin/activate
 ```
 
-2. Download a model (e.g., LLaMA 2 7B) into `models/base_model`:
+2. Download a model (e.g., LLaMA 3.2 3B Instruct) into `models/base_model`:
 
 ```bash
-python scripts/download_models.py meta-llama/Llama-2-7b-hf
+python scripts/download_models.py meta-llama/Llama-3.2-3B-Instruct
 ```
 
-3. Download a dataset (e.g., LaMP) into `data/raw`:
+（必要に応じて他のモデル名に置き換えてください）
 
+3. Download a dataset
+
+- **Hugging Face データセット** を取得する場合:
+  ```bash
+  python scripts/download_datasets.py <HF-dataset-name>
+  ```
+  （例: `imdb`, `glue` など）
+
+**LaMP-2 (映画タグ分類タスク)** を取得・前処理する場合:
 ```bash
-python scripts/download_datasets.py LaMP
+python scripts/download_datasets.py LaMP-2  # questions.json と answers.json を自動でダウンロードします
 ```
-
-You can replace the model or dataset names with any available on the HuggingFace Hub.
