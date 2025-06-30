@@ -52,5 +52,15 @@ python scripts/download_models.py meta-llama/Llama-3.2-3B-Instruct
 
 **LaMP-2 (映画タグ分類タスク)** を取得・前処理する場合:
 ```bash
-python scripts/download_datasets.py LaMP-2  # questions.json と answers.json を自動でダウンロードします
+python scripts/download_datasets.py LaMP-2  # questions.json と answers.json、profile_rankings.json、merged.json を取得・生成します
+```
+
+4. Generate insights and tags via LLM
+
+下記のように、raw データ配下の merged.json を入力にして、self_generate.py を実行します:
+
+```bash
+python ../self_generate.py \
+  --input data/raw/LaMP-2/merged.json \
+  --outdir processed/LaMP-2/selfgen/
 ```

@@ -6,44 +6,44 @@ from typing import List, Dict
 import numpy as np
 from sklearn.decomposition import PCA
 
-try:
-    import openai
-except ImportError:  # pragma: no cover - openai is optional for testing
-    openai = None
+from openai import OpenAI
+
+# クライアントをインスタンス化（環境変数 OPENAI_API_KEY を自動で読み取ります）
+client = OpenAI()
 
 
-def select_representative_items(profile: List[str], k: int = 5) -> List[str]:
-    """Return top-k representative items from the profile using PCA on OpenAI embeddings."""
-    if openai is None:
-        raise RuntimeError("openai package is not installed")
-    if not profile:
+def select_representative_items(texts: List[str], k: int = 5) -> List[str]:
+    """Return top-k representative texts using PCA on OpenAI embeddings."""
+    if not texts:
         return []
-    # Request embeddings for all profile items in a single API call
-    try:  # pragma: no cover - network call
-        if hasattr(openai, "Embeddings"):
-            resp = openai.Embeddings.create(model="text-embedding-ada-002", input=profile)
-        else:
-            resp = openai.Embedding.create(model="text-embedding-ada-002", input=profile)
-    except Exception as exc:  # pragma: no cover - network call
+
+    # 埋め込みを一括取得
+    try:
+        resp = client.embeddings.create(
+            model="text-embedding-ada-002",
+            input=texts,
+        )
+    except Exception as exc:
         print(f"Error obtaining embeddings: {exc}")
-        return profile[:k]
+        # 失敗したら単純に先頭 k 件を返す
+        return texts[:k]
 
     embeddings = [np.array(d.embedding, dtype=np.float32) for d in resp.data]
-    if len(profile) <= k:
-        return profile
+    if len(texts) <= k:
+        return texts
+
+    # PCAで第1主成分への投影をとり、絶対値が大きい順に選ぶ
     pca = PCA(n_components=1)
-    components = pca.fit_transform(embeddings)
-    scores = np.abs(components[:, 0])
+    comps = pca.fit_transform(embeddings)
+    scores = np.abs(comps[:, 0])
     top_idx = np.argsort(scores)[::-1][:k]
-    return [profile[i] for i in top_idx]
+    return [texts[i] for i in top_idx]
 
 
 def request_llm(prompt: str, model: str = "gpt-3.5-turbo", max_tokens: int = 50) -> str:
     """Send the prompt to the OpenAI API and return the response string."""
-    if openai is None:
-        raise RuntimeError("openai package is not installed")
     try:
-        resp = openai.ChatCompletion.create(
+        resp = client.chat.completions.create(
             model=model,
             messages=[
                 {"role": "system", "content": "You are a helpful assistant and must reply in English."},
@@ -51,8 +51,8 @@ def request_llm(prompt: str, model: str = "gpt-3.5-turbo", max_tokens: int = 50)
             ],
             max_tokens=max_tokens,
         )
-        return resp.choices[0].message["content"].strip()
-    except Exception as exc:  # pragma: no cover - network call
+        return resp.choices[0].message.content.strip()
+    except Exception as exc:
         print(f"Error during LLM call: {exc}")
         return ""
 
@@ -64,10 +64,6 @@ def main(args: argparse.Namespace):
     with open(args.input, "r", encoding="utf-8") as f:
         records: List[Dict] = json.load(f)
 
-    # Configure OpenAI API key if available in environment
-    if openai is not None and not openai.api_key:
-        openai.api_key = os.getenv("OPENAI_API_KEY")
-
     personal_insights = []
     neutral_insights = []
     personal_pairs = []
@@ -76,10 +72,16 @@ def main(args: argparse.Namespace):
     for rec in records:
         rec_id = rec.get("id")
         input_text = rec.get("input", "")
-        profile_items = rec.get("profile", [])
+        profile_items = rec.get("profile", [])  # List[Dict]
 
-        selected = select_representative_items(profile_items, k=5)
-        items_text = ", ".join(selected)
+        # ────── ここが修正ポイント ──────
+        # profile_items が dict のリストなので、まず description フィールドだけ取り出す
+        profile_texts = [item.get("description", "") for item in profile_items]
+        # select_representative_items には文字列リストを渡す
+        selected_texts = select_representative_items(profile_texts, k=5)
+        # プロンプト用のテキストを結合
+        items_text = "\n".join(selected_texts)
+        # ────────────────────────────
 
         personal_prompt = (
             "Here is the user's past movie-tagging history:\n"

@@ -40,6 +40,13 @@ def download_dataset(dataset_name: str, output_dir: str):
             )
             raw_task_dir.mkdir(parents=True, exist_ok=True)
             cwd = repo_dir / "LaMP"
+            # patch rank_profiles.py: unpack the extra return value from classification_movies_query_corpus_maker
+            rank_py = cwd / "rank_profiles.py"
+            subprocess.run([
+                "sed", "-i",
+                "s/\(corpus, *query\) = classification_movies_query_corpus_maker/\1, _ = classification_movies_query_corpus_maker/",
+                str(rank_py),
+            ], check=True)
             subprocess.run(
                 [
                     "python", "rank_profiles.py",
