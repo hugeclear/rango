@@ -1,0 +1,124 @@
+# Chameleon LaMP評価システム設定ファイル
+
+# モデル設定
+model:
+  name: "meta-llama/Llama-3.2-3B-Instruct"  # 使用するLLMモデル
+  device: "auto"  # デバイス設定 ("auto", "cuda", "cpu")
+  max_length: 512  # 最大トークン長
+  batch_size: 4  # バッチサイズ
+  torch_dtype: "float16"  # データ型 ("float16", "float32")
+
+# Chameleon設定
+chameleon:
+  # 自己生成データ設定
+  num_self_generated: 10  # 生成するpersonal/neutralペア数
+  
+  # 埋め込み編集設定
+  target_layers: 
+    - "model.layers.16"  # 編集対象レイヤー（Llama-3.2の中間層）
+    - "model.layers.20"
+  
+  # 編集強度パラメータ
+  alpha_personal: 1.5   # パーソナル方向の強度
+  alpha_general: -0.8   # ニュートラル方向の強度
+  
+  # SVD設定
+  svd_components: 2     # 使用する主成分数
+  
+  # 前処理済みデータパス
+  theta_p_path: "processed/LaMP-2/theta_p.json"
+  theta_n_path: "processed/LaMP-2/theta_n.json"
+
+# 評価設定
+evaluation:
+  # データ設定
+  max_users: 10         # 評価対象ユーザー数
+  samples_per_user: 5   # ユーザーあたりのサンプル数
+  
+  # 評価メトリクス
+  metrics:
+    - "exact_match"     # 完全一致率
+    - "bleu_score"      # BLEU スコア
+    - "accuracy"        # 分類精度
+    - "f1_score"        # F1スコア
+  
+  # 統計検定設定
+  significance_test: true      # 統計的有意性検定を実行
+  confidence_level: 0.05       # 有意水準
+  
+  # プロンプト設定
+  task_prompt: |
+    Given the following movie description, provide a single word tag that best describes the movie:
+
+    Movie: {input}
+
+    Tag:
+
+# データパス設定
+data:
+  # 入力データ
+  merged_data_path: "chameleon_prime_personalization/data/raw/LaMP-2/merged.json"
+  ground_truth_path: "chameleon_prime_personalization/data/raw/LaMP-2/answers.json"
+  
+  # 前処理済みデータ
+  processed_dir: "processed/LaMP-2/"
+  
+  # 自己生成データ
+  personal_insights_path: "processed/LaMP-2/personal_insights.json"
+  neutral_insights_path: "processed/LaMP-2/neutral_insights.json"
+  personal_pairs_path: "processed/LaMP-2/personal_pairs.json"
+  neutral_pairs_path: "processed/LaMP-2/neutral_pairs.json"
+
+# 出力設定
+output:
+  results_dir: "./results"     # 結果出力ディレクトリ
+  save_predictions: true       # 予測結果を保存
+  save_embeddings: false       # 埋め込みを保存（メモリ節約のためデフォルトはfalse）
+  generate_plots: true         # 可視化グラフを生成
+  
+  # レポート設定
+  generate_report: true        # マークダウンレポートを生成
+  include_examples: true       # 予測例を含める
+  max_examples: 10             # 表示する予測例の最大数
+
+# ログ設定
+logging:
+  level: "INFO"               # ログレベル ("DEBUG", "INFO", "WARNING", "ERROR")
+  log_file: "evaluation.log"  # ログファイル名
+  console_output: true        # コンソール出力を有効化
+
+# パフォーマンス設定
+performance:
+  # メモリ管理
+  clear_cache: true           # 評価後にGPUキャッシュをクリア
+  low_memory_mode: false      # 低メモリモード（精度は下がる可能性）
+  
+  # 並列処理
+  num_workers: 2              # データローダーのワーカー数
+  
+  # プログレス表示
+  show_progress: true         # プログレスバーを表示
+  progress_interval: 1        # プログレス更新間隔（サンプル数）
+
+# 実験設定（アブレーション研究用）
+experiment:
+  # パラメータ範囲
+  alpha_personal_range: [0.5, 1.0, 1.5, 2.0, 2.5]
+  alpha_general_range: [-1.0, -0.8, -0.5, -0.2, 0.0]
+  
+  # 実行設定
+  run_ablation: false         # アブレーション研究を実行
+  cross_validation: false     # クロスバリデーションを実行
+  
+  # 比較手法
+  baseline_methods:
+    - "no_personalization"    # パーソナライゼーションなし
+    - "simple_retrieval"      # 単純な検索ベース
+    - "profile_conditioning"  # プロファイル条件付け
+
+# デバッグ設定
+debug:
+  enabled: false              # デバッグモードを有効化
+  save_intermediate: false    # 中間結果を保存
+  verbose_errors: true        # 詳細なエラーメッセージ
+  sample_limit: null          # デバッグ時のサンプル数制限

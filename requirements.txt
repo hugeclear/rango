@@ -1,0 +1,52 @@
+# Chameleon LaMP Evaluation System Requirements
+
+# Core ML Libraries
+torch>=2.0.0
+transformers>=4.30.0
+torch-audio>=2.0.0
+
+# Scientific Computing
+numpy>=1.21.0
+scipy>=1.7.0
+scikit-learn>=1.0.0
+pandas>=1.3.0
+
+# Natural Language Processing
+nltk>=3.8
+tokenizers>=0.13.0
+
+# Visualization
+matplotlib>=3.5.0
+seaborn>=0.11.0
+plotly>=5.0.0
+
+# Configuration and I/O
+pyyaml>=6.0
+jsonlines>=3.0.0
+
+# Progress and Utilities
+tqdm>=4.64.0
+psutil>=5.8.0
+rich>=12.0.0
+
+# Statistics and Evaluation
+statsmodels>=0.13.0
+
+# Optional GPU Acceleration (for CUDA environments)
+# accelerate>=0.20.0
+# bitsandbytes>=0.39.0
+
+# Development and Testing (optional)
+# pytest>=7.0.0
+# black>=22.0.0
+# flake8>=4.0.0
+
+# OpenAI API (if using GPT models for comparison)
+openai>=1.0.0
+
+# Jupyter (for notebook analysis)
+# jupyter>=1.0.0
+# ipywidgets>=8.0.0
+
+# Memory profiling (optional)
+# memory-profiler>=0.60.0
