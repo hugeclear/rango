@@ -64,7 +64,7 @@ class LaMPDataLoader:
         self.ground_truth = None
         
     def load_merged_data(self) -> List[Dict]:
-        """merged.jsonからデータを読み込み"""
+        """merged.jsonからデータを読み込み（バックアップソース対応）"""
         possible_paths = [
             self.data_path / "chameleon_prime_personalization/data/raw/LaMP-2/merged.json",
             self.data_path / "processed/LaMP-2/merged.json",
@@ -72,6 +72,7 @@ class LaMPDataLoader:
             self.data_path / "merged.json"
         ]
         
+        # プライマリデータソースをチェク
         for path in possible_paths:
             if path.exists():
                 logger.info(f"Loading merged data from: {path}")
@@ -79,16 +80,30 @@ class LaMPDataLoader:
                     self.merged_data = json.load(f)
                 return self.merged_data
         
-        raise FileNotFoundError("merged.json not found in expected locations")
+        # バックアップデータソース（LaMP_all）を使用
+        backup_path = self.data_path / "data/raw/LaMP_all/LaMP_2/user-based/dev/dev_questions.json"
+        if backup_path.exists():
+            logger.info(f"Using backup data source: {backup_path}")
+            with open(backup_path, 'r', encoding='utf-8') as f:
+                backup_data = json.load(f)
+            
+            # LaMP_all形式をmerged形式に変換
+            if isinstance(backup_data, dict) and 'instances' in backup_data:
+                self.merged_data = backup_data['instances'][:1000]  # 最初の1000サンプル
+                logger.info(f"Loaded {len(self.merged_data)} samples from backup source")
+                return self.merged_data
+        
+        raise FileNotFoundError("No valid data source found (primary or backup)")
     
     def load_ground_truth(self) -> Dict[str, str]:
-        """正解データを読み込み"""
+        """正解データを読み込み（バックアップソース対応）"""
         possible_paths = [
             self.data_path / "chameleon_prime_personalization/data/raw/LaMP-2/answers.json",
             self.data_path / "data/raw/LaMP-2/answers.json",
             self.data_path / "answers.json"
         ]
         
+        # プライマリソース確認
         for path in possible_paths:
             if path.exists():
                 logger.info(f"Loading ground truth from: {path}")
@@ -103,6 +118,17 @@ class LaMPDataLoader:
                 elif isinstance(answers_data, list):
                     # Direct list format
                     return {str(ans['id']): ans['output'].strip().lower() for ans in answers_data}
+        
+        # バックアップ正解データを使用
+        backup_answers_path = self.data_path / "data/raw/LaMP_all/LaMP_2/user-based/dev/dev_outputs.json"
+        if backup_answers_path.exists():
+            logger.info(f"Using backup ground truth: {backup_answers_path}")
+            with open(backup_answers_path, 'r', encoding='utf-8') as f:
+                answers_data = json.load(f)
+            
+            if isinstance(answers_data, dict) and 'golds' in answers_data:
+                golds = answers_data['golds']
+                return {str(gold['id']): gold['output'].strip().lower() for gold in golds}
                 
         logger.warning("Ground truth not found, evaluation will be prediction-only")
         return {}
@@ -138,15 +164,23 @@ class ChameleonEditor:
     3. 推論時リアルタイム埋め込み編集
     """
     
-    def __init__(self, model_name: str = "meta-llama/Llama-3.2-3B-Instruct", device: str = "auto"):
+    def __init__(self, model_name: str = "meta-llama/Llama-3.2-3B-Instruct", device: str = "auto", torch_dtype: str = "float32"):
         self.model_name = model_name
         self.device = torch.device("cuda" if torch.cuda.is_available() and device == "auto" else device)
+        
+        # torch_dtypeの処理
+        if torch_dtype == "float32":
+            dtype = torch.float32
+        elif torch_dtype == "float16":
+            dtype = torch.float16
+        else:
+            dtype = torch.float32  # デフォルト
         
         logger.info(f"Loading model: {model_name}")
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
         self.model = AutoModelForCausalLM.from_pretrained(
             model_name,
-            torch_dtype=torch.float16 if self.device.type == "cuda" else torch.float32,
+            torch_dtype=dtype,
             device_map="auto" if self.device.type == "cuda" else None
         )
         
@@ -256,15 +290,23 @@ class ChameleonEditor:
             """編集用フック: output += α_p * personal_dir + α_n * neutral_dir"""
             batch_size, seq_len, hidden_dim = output[0].shape
             
-            # 方向ベクトルを適切な形状に変換
-            personal_edit = self.personal_direction[:hidden_dim].unsqueeze(0).unsqueeze(0)
-            neutral_edit = self.neutral_direction[:hidden_dim].unsqueeze(0).unsqueeze(0)
+            # 出力テンソルのデバイスとデータ型を取得
+            device = output[0].device
+            dtype = output[0].dtype
+            
+            # 方向ベクトルを適切な形状とデータ型に変換
+            personal_edit = self.personal_direction[:hidden_dim].to(device=device, dtype=dtype).unsqueeze(0).unsqueeze(0)
+            neutral_edit = self.neutral_direction[:hidden_dim].to(device=device, dtype=dtype).unsqueeze(0).unsqueeze(0)
+            
+            # スケーリング係数もテンソルに変換
+            alpha_p_tensor = torch.tensor(alpha_personal, device=device, dtype=dtype)
+            alpha_n_tensor = torch.tensor(alpha_neutral, device=device, dtype=dtype)
             
             # 埋め込み編集
             edited_output = (
                 output[0] + 
-                alpha_personal * personal_edit.expand(batch_size, seq_len, -1) +
-                alpha_neutral * neutral_edit.expand(batch_size, seq_len, -1)
+                alpha_p_tensor * personal_edit.expand(batch_size, seq_len, -1) +
+                alpha_n_tensor * neutral_edit.expand(batch_size, seq_len, -1)
             )
             
             return (edited_output,) + output[1:]
@@ -503,9 +545,9 @@ class EvaluationEngine:
         if len(baseline_results.ground_truths) < 2 or len(chameleon_results.ground_truths) < 2:
             return {"p_value": 1.0, "improvement_rate": 0.0}
         
-        # 各サンプルの正解/不正解を計算
-        baseline_correct = [p == g for p, g in zip(baseline_results.predictions, baseline_results.ground_truths)]
-        chameleon_correct = [p == g for p, g in zip(chameleon_results.predictions, chameleon_results.ground_truths)]
+        # 各サンプルの正解/不正解を計算 (booleanを数値に変換)
+        baseline_correct = np.array([int(p == g) for p, g in zip(baseline_results.predictions, baseline_results.ground_truths)])
+        chameleon_correct = np.array([int(p == g) for p, g in zip(chameleon_results.predictions, chameleon_results.ground_truths)])
         
         # 対応サンプルのt検定
         if len(baseline_correct) == len(chameleon_correct):
@@ -537,7 +579,8 @@ class ChameleonEvaluator:
         self.data_loader = LaMPDataLoader(data_path)
         self.chameleon_editor = ChameleonEditor(
             model_name=self.config['model']['name'],
-            device=self.config['model'].get('device', 'auto')
+            device=self.config['model'].get('device', 'auto'),
+            torch_dtype=self.config['model'].get('torch_dtype', 'float32')
         )
         self.evaluation_engine = EvaluationEngine(self.chameleon_editor)
         
