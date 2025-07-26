@@ -82,7 +82,7 @@ class EnvironmentChecker:
     def check_dependencies():
         """依存関係チェック"""
         required_packages = [
-            'torch', 'transformers', 'numpy', 'pandas', 'scikit-learn',
+            'torch', 'transformers', 'numpy', 'pandas', 'sklearn',
             'matplotlib', 'seaborn', 'scipy', 'yaml', 'nltk'
         ]
         
@@ -296,21 +296,21 @@ class EvaluationRunner:
         print("🎯 Evaluation Results Summary")
         print("=" * 60)
         
-        baseline = results.get('baseline', {})
-        chameleon = results.get('chameleon', {})
+        baseline = results.get('baseline_performance', None)
+        chameleon = results.get('chameleon_performance', None)
         significance = results.get('significance', {})
         
         if baseline:
             print(f"\n📊 Baseline:")
-            print(f"   Accuracy: {baseline.get('accuracy', 0):.3f}")
-            print(f"   Exact Match: {baseline.get('exact_match', 0):.3f}")
-            print(f"   BLEU Score: {baseline.get('bleu_score', 0):.3f}")
+            print(f"   Accuracy: {baseline.accuracy:.3f}")
+            print(f"   Exact Match: {baseline.exact_match:.3f}")
+            print(f"   BLEU Score: {baseline.bleu_score:.3f}")
         
         if chameleon:
             print(f"\n🦎 Chameleon:")
-            print(f"   Accuracy: {chameleon.get('accuracy', 0):.3f}")
-            print(f"   Exact Match: {chameleon.get('exact_match', 0):.3f}")
-            print(f"   BLEU Score: {chameleon.get('bleu_score', 0):.3f}")
+            print(f"   Accuracy: {chameleon.accuracy:.3f}")
+            print(f"   Exact Match: {chameleon.exact_match:.3f}")
+            print(f"   BLEU Score: {chameleon.bleu_score:.3f}")
         
         if baseline and chameleon and significance:
             improvement = significance.get('improvement_rate', 0) * 100
