@@ -291,64 +291,59 @@ class ChameleonEditor:
             """編集用フック: output += α_p * personal_dir + α_n * neutral_dir"""
             if self.personal_direction is None or self.neutral_direction is None:
                 logger.warning("Direction vectors not loaded, skipping Chameleon editing")
-                
-            if isinstance(output, tuple):
-                output_tensor = output[0]
-                has_additional_outputs = len(output) > 1
-                additional_outputs = output[1:] if has_additional_outputs else ()
-            else:
-                output_tensor = output
-                has_additional_outputs = False
-                additional_outputs = ()
-            
-            #　形状の安全な取得
-            original_shape = output_tensor.shape
-            reshape_needed = False  # Initialize reshape_needed
-            
-            if len(original_shape) == 3:
-                batch_size, seq_len, hidden_dim = original_shape
-            elif len(original_shape) == 2:
-                batch_size, hidden_dim = original_shape
-                seq_len = 1
-                reshape_needed = True
-                # 3次元に変換
-                output_tensor = output_tensor.unsqueeze(1)
-            else:
-                logger.warning(f"Unexpected output shape: {original_shape}, skipping editing hook")
                 return output
-          
-            # 出力テンソルのデバイスとデータ型を取得
-            device = output_tensor.device
-            dtype = output_tensor.dtype
+                
             try:
-                # 方向ベクトルのながさチェック
+                if isinstance(output, tuple):
+                    output_tensor = output[0]
+                    has_additional_outputs = len(output) > 1
+                    additional_outputs = output[1:] if has_additional_outputs else ()
+                else:
+                    output_tensor = output
+                    has_additional_outputs = False
+                    additional_outputs = ()
+                
+                # 形状とデバイス情報を取得
+                original_shape = output_tensor.shape
+                device = output_tensor.device
+                dtype = output_tensor.dtype
+                
+                logger.debug(f"Hook debug: output_shape={original_shape}, device={device}, dtype={dtype}")
+                
+                # 隠れ次元を取得
+                if len(original_shape) == 3:
+                    batch_size, seq_len, hidden_dim = original_shape
+                elif len(original_shape) == 2:
+                    batch_size, hidden_dim = original_shape
+                    seq_len = 1
+                else:
+                    logger.warning(f"Unexpected output shape: {original_shape}, skipping editing hook")
+                    return output
+                
+                # 方向ベクトルの長さチェック
                 if len(self.personal_direction) < hidden_dim or len(self.neutral_direction) < hidden_dim:
                     logger.warning(f"Direction vectors too short ({len(self.personal_direction)}, {len(self.neutral_direction)}) for hidden_dim {hidden_dim}")
                     return output
-                # 方向ベクトルを適切な形状とデータ型に変換
-                personal_edit = torch.tensor(
-                    self.personal_direction[:hidden_dim],
-                    device=device, 
-                    dtype=dtype
-                    ).unsqueeze(0).unsqueeze(0)
-                neutral_edit = torch.tensor(
-                    self.neutral_direction[:hidden_dim],
-                    device=device, 
-                    dtype=dtype).unsqueeze(0).unsqueeze(0)
                 
-                # スケーリング係数もテンソルに変換
-                alpha_p_tensor = torch.tensor(alpha_personal, device=device, dtype=dtype)
-                alpha_n_tensor = torch.tensor(alpha_neutral, device=device, dtype=dtype)
+                # 方向ベクトルを取得して適切な形状に変換
+                personal_vec = self.personal_direction[:hidden_dim].to(device=device, dtype=dtype)
+                neutral_vec = self.neutral_direction[:hidden_dim].to(device=device, dtype=dtype)
                 
-                # 埋め込み編集
-                edited_output = (
-                    output_tensor + 
-                    alpha_p_tensor * personal_edit +
-                    alpha_n_tensor * neutral_edit
-                )
-                if reshape_needed:
-                    edited_output = edited_output.squeeze(1)
-                    
+                # スケーリング係数
+                alpha_p = torch.tensor(alpha_personal, device=device, dtype=dtype)
+                alpha_n = torch.tensor(alpha_neutral, device=device, dtype=dtype)
+                
+                # 編集ベクトルを計算（ブロードキャスト対応）
+                if len(original_shape) == 3:
+                    # (batch, seq, hidden) の場合
+                    edit_vector = (alpha_p * personal_vec + alpha_n * neutral_vec).view(1, 1, hidden_dim)
+                else:
+                    # (batch, hidden) の場合
+                    edit_vector = (alpha_p * personal_vec + alpha_n * neutral_vec).view(1, hidden_dim)
+                
+                # 埋め込み編集を適用
+                edited_output = output_tensor + edit_vector
+                
                 if has_additional_outputs:
                     return (edited_output,) + additional_outputs
                 else:
