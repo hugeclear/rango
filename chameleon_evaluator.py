@@ -333,13 +333,20 @@ class ChameleonEditor:
                 alpha_p = torch.tensor(alpha_personal, device=device, dtype=dtype)
                 alpha_n = torch.tensor(alpha_neutral, device=device, dtype=dtype)
                 
-                # 編集ベクトルを計算（ブロードキャスト対応）
+                # 編集ベクトルを計算（実際のテンソル形状に合わせる）
+                base_edit = alpha_p * personal_vec + alpha_n * neutral_vec
+                
                 if len(original_shape) == 3:
-                    # (batch, seq, hidden) の場合
-                    edit_vector = (alpha_p * personal_vec + alpha_n * neutral_vec).view(1, 1, hidden_dim)
-                else:
+                    # (batch, seq, hidden) の場合 - 実際のseq次元に合わせる
+                    batch_size, seq_len, hidden_dim = original_shape
+                    edit_vector = base_edit.view(1, 1, hidden_dim).expand(batch_size, seq_len, hidden_dim)
+                elif len(original_shape) == 2:
                     # (batch, hidden) の場合
-                    edit_vector = (alpha_p * personal_vec + alpha_n * neutral_vec).view(1, hidden_dim)
+                    batch_size, hidden_dim = original_shape
+                    edit_vector = base_edit.view(1, hidden_dim).expand(batch_size, hidden_dim)
+                else:
+                    # その他の形状の場合はそのまま
+                    edit_vector = base_edit
                 
                 # 埋め込み編集を適用
                 edited_output = output_tensor + edit_vector

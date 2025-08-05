@@ -1,10 +1,13 @@
 chameleon:
-  alpha_personal: 1.5
-  alpha_general: -0.8
+  alpha_personal: 0.3
+  alpha_general: -0.05
   num_self_generated: 10
   target_layers:
-  - model.layers.20
-  - model.layers.22
+  - model.layers.14.mlp
+  theta_p_path: chameleon_prime_personalization/processed/LaMP-2/theta_p.npy
+  theta_n_path: chameleon_prime_personalization/processed/LaMP-2/theta_n.npy
+  direction_p_path: chameleon_prime_personalization/processed/LaMP-2/theta_p.npy
+  direction_n_path: chameleon_prime_personalization/processed/LaMP-2/theta_n.npy
 data_sources:
   answers_backup: data/raw/LaMP_all/LaMP_2/user-based/dev/dev_outputs.json
   answers_primary: chameleon_prime_personalization/data/raw/LaMP-2/answers.json

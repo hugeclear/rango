@@ -1,0 +1,68 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Virtual environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Model files and large data
+*.bin
+*.pt
+*.pth
+*.ckpt
+*.h5
+*.pkl
+*.model
+*.safetensors
+
+# Generated results and logs
+results/
+evaluation_results/
+cfs_evaluation_results/
+cfs_demo_results/
+lampqa_evaluation_results/
+optimization_results/
+alpha_optimization_results/
+processed_backup_full/
+*.log
+debug_*
+*.csv
+*.json
+*.tmp
+
+# Large model directories
+chameleon_prime_personalization/models/
+chameleon_prime_personalization/processed/
+chameleon_prime_personalization/evaluate/
+phase2_peft/
+data/
+
+# Backup files
+*.backup
+*.bak
+config.yaml.batch_backup
+
+# Version files (pip install artifacts)
+=*
+
+# Test files
+test_*.py
+coldstart_performance_analysis.py
+measure_collaboration_benefits.py
+test_cfs_chameleon_compatibility.py
