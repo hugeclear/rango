@@ -1,0 +1,102 @@
+# alpha_batch_config.yaml
+# Chameleonのα値バッチテスト設定
+
+# 実験設定
+experiment:
+  name: "alpha_optimization_batch"
+  description: "Systematic alpha parameter optimization"
+  target_improvement: 0.25  # 25%改善目標
+  early_stop: true  # 目標達成で早期終了
+  max_parallel: 1   # 並列実行数（GPUメモリに応じて調整）
+
+# 評価設定
+evaluation:
+  mode: "demo"
+  skip_checks: true
+  max_samples: 11
+  timeout: 180  # 3分タイムアウト
+
+# α値のテストパターン
+alpha_test_patterns:
+  
+  # Phase 1: 基本探索
+  phase1_basic:
+    description: "Basic range exploration"
+    combinations:
+      - {alpha_personal: 0.5, alpha_neutral: -0.2, priority: "low"}
+      - {alpha_personal: 1.0, alpha_neutral: -0.5, priority: "medium"}
+      - {alpha_personal: 1.5, alpha_neutral: -0.8, priority: "high"}
+      - {alpha_personal: 2.0, alpha_neutral: -1.0, priority: "high"}
+      - {alpha_personal: 2.5, alpha_neutral: -1.2, priority: "medium"}
+      - {alpha_personal: 3.0, alpha_neutral: -1.5, priority: "low"}
+  
+  # Phase 2: 有望範囲の詳細探索
+  phase2_promising:
+    description: "Detailed exploration of promising range"
+    combinations:
+      - {alpha_personal: 1.2, alpha_neutral: -0.6, priority: "medium"}
+      - {alpha_personal: 1.4, alpha_neutral: -0.7, priority: "high"}
+      - {alpha_personal: 1.6, alpha_neutral: -0.8, priority: "high"}
+      - {alpha_personal: 1.8, alpha_neutral: -0.9, priority: "high"}
+      - {alpha_personal: 2.2, alpha_neutral: -1.1, priority: "medium"}
+      - {alpha_personal: 2.4, alpha_neutral: -1.2, priority: "medium"}
+  
+  # Phase 3: 微調整
+  phase3_fine_tuning:
+    description: "Fine-tuning around best candidates"
+    combinations:
+      - {alpha_personal: 1.45, alpha_neutral: -0.75, priority: "high"}
+      - {alpha_personal: 1.55, alpha_neutral: -0.85, priority: "high"}
+      - {alpha_personal: 1.65, alpha_neutral: -0.82, priority: "high"}
+      - {alpha_personal: 1.75, alpha_neutral: -0.88, priority: "high"}
+      - {alpha_personal: 1.85, alpha_neutral: -0.92, priority: "medium"}
+      - {alpha_personal: 1.95, alpha_neutral: -0.95, priority: "medium"}
+  
+  # Phase 4: 極値探索
+  phase4_extreme:
+    description: "Extreme values exploration"
+    combinations:
+      - {alpha_personal: 0.8, alpha_neutral: -0.3, priority: "low"}
+      - {alpha_personal: 3.5, alpha_neutral: -2.0, priority: "low"}
+      - {alpha_personal: 4.0, alpha_neutral: -2.5, priority: "low"}
+      - {alpha_personal: 1.0, alpha_neutral: -2.0, priority: "medium"}  # 非対称
+      - {alpha_personal: 3.0, alpha_neutral: -0.5, priority: "medium"}  # 非対称
+  
+  # Phase 5: 特殊パターン
+  phase5_special:
+    description: "Special asymmetric patterns"
+    combinations:
+      - {alpha_personal: 1.0, alpha_neutral: -1.5, priority: "medium"}
+      - {alpha_personal: 2.5, alpha_neutral: -0.5, priority: "medium"}
+      - {alpha_personal: 0.5, alpha_neutral: -1.0, priority: "low"}
+      - {alpha_personal: 1.5, alpha_neutral: -2.0, priority: "low"}
+
+# 実行順序設定
+execution:
+  order: ["phase1_basic", "phase2_promising", "phase3_fine_tuning", "phase4_extreme", "phase5_special"]
+  priority_order: ["high", "medium", "low"]  # 優先度順
+  
+# 結果保存設定
+output:
+  base_dir: "alpha_optimization_results"
+  save_individual_results: true
+  save_summary: true
+  create_visualizations: true
+  
+# Chameleonの基本設定
+chameleon:
+  target_layers: ["model.layers.16"]
+  # target_layers: ["model.layers.16", "model.layers.20"]  # 複数レイヤーの場合
+  
+# 成功判定基準
+success_criteria:
+  minimum_improvement: 0.05    # 5%以上で成功
+  good_improvement: 0.15       # 15%以上で良好
+  excellent_improvement: 0.25  # 25%以上で優秀
+  
+# レポート設定
+reporting:
+  generate_heatmap: true
+  generate_trends: true
+  generate_recommendations: true
+  top_n_results: 10
