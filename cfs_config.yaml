@@ -6,7 +6,8 @@ model:
   name: "meta-llama/Llama-3.2-3B-Instruct"
   device: "cuda"  # auto, cuda, cpu
   torch_dtype: "float32"  # float32, float16, bfloat16
-  max_length: 512
+  max_length: 128  # 改善: 50→128 (入力長を考慮した適切な値)
+  max_new_tokens: 30  # 新規: 生成トークン数の明示的制限
   batch_size: 4
 
 # Chameleon基本設定（既存互換）
@@ -164,7 +165,8 @@ monitoring:
 # 互換性設定
 compatibility:
   maintain_legacy_api: true           # 既存API互換性維持
-  enable_fallback: true              # フォールバック機能有効化
+  enable_fallback: false             # 改善: フォールバック無効化（デバッグ用）
+  strict_mode: true                  # 新規: エラー時の厳密動作
   legacy_mode_available: true        # レガシーモード利用可能
   migration_support: true            # マイグレーション支援
 
@@ -185,11 +187,13 @@ output:
 
 # デバッグ・開発設定
 development:
-  enable_debug_mode: false
-  verbose_logging: false
-  save_intermediate_results: false
+  enable_debug_mode: true            # 改善: デバッグモード有効化
+  verbose_logging: true              # 改善: 詳細ログ有効化
+  save_intermediate_results: true    # 改善: 中間結果保存有効化
   enable_assertions: true
   test_mode: false
+  debug_hooks: true                  # 新規: フック動作のデバッグ
+  log_generation_steps: true         # 新規: 生成ステップのログ
   
   # 開発用データ設定
   use_synthetic_data: false
