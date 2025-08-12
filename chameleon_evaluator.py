@@ -11,20 +11,19 @@ Chameleon LaMP-2 Evaluation System
 
 import json
 import os
+from threading import local
 import time
 import yaml
+import csv
+from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Tuple, Any, Optional, Union
+from typing import Dict, List, Tuple, Any
 from dataclasses import dataclass
 import numpy as np
 import torch
 import torch.nn.functional as F
 from transformers import AutoTokenizer, AutoModelForCausalLM
-# sklearn dependency removed - using standard library implementations
 from scipy import stats
-# matplotlib/seaborn dependencies removed to avoid GLIBCXX issues
-# import matplotlib.pyplot as plt
-# import seaborn as sns
 from collections import defaultdict
 import logging
 
@@ -40,9 +39,12 @@ except ImportError:
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+
+# =========================
+# Dataclasses
+# =========================
 @dataclass
 class EvaluationResult:
-    """評価結果データクラス"""
     method_name: str
     accuracy: float
     exact_match: float
@@ -56,223 +58,231 @@ class EvaluationResult:
     predictions: List[str]
     ground_truths: List[str]
 
+
+# =========================
+# Data Loader
+# =========================
 class LaMPDataLoader:
     """LaMP-2データの読み込みとユーザー分割"""
-    
     def __init__(self, data_path: str):
         self.data_path = Path(data_path)
         self.merged_data = None
         self.ground_truth = None
-        
+
     def load_merged_data(self) -> List[Dict]:
-        """merged.jsonからデータを読み込み（バックアップソース対応）"""
+        # Priority 1: Check data_path/raw/LaMP-2/merged.json first
+        primary_merged = self.data_path / "raw/LaMP-2/merged.json"
+        if primary_merged.exists():
+            logger.info(f"Loading merged data from priority path: {primary_merged}")
+            with open(primary_merged, 'r', encoding='utf-8') as f:
+                self.merged_data = json.load(f)
+            return self.merged_data
+
+        # Priority 2: Check data_path/raw/LaMP-2/answers.json as backup
+        backup_answers = self.data_path / "raw/LaMP-2/answers.json"
+        if backup_answers.exists():
+            logger.info(f"Loading data from backup answers: {backup_answers}")
+            with open(backup_answers, 'r', encoding='utf-8') as f:
+                answers_data = json.load(f)
+            # Convert answers format to merged format if needed
+            if isinstance(answers_data, dict) and 'golds' in answers_data:
+                # Convert to merged-like format
+                self.merged_data = []
+                for gold in answers_data['golds'][:1000]:  # Limit for demo
+                    self.merged_data.append({
+                        'id': gold['id'],
+                        'input': f"Question: {gold.get('input', 'Unknown question')}",
+                        'output': gold['output']
+                    })
+                logger.info(f"Converted {len(self.merged_data)} samples from answers format")
+                return self.merged_data
+
+        # Fallback: Original path resolution for compatibility
         possible_paths = [
             self.data_path / "chameleon_prime_personalization/data/raw/LaMP-2/merged.json",
             self.data_path / "processed/LaMP-2/merged.json",
             self.data_path / "data/raw/LaMP-2/merged.json",
             self.data_path / "merged.json"
         ]
-        
-        # プライマリデータソースをチェク
         for path in possible_paths:
             if path.exists():
-                logger.info(f"Loading merged data from: {path}")
+                logger.info(f"Loading merged data from fallback path: {path}")
                 with open(path, 'r', encoding='utf-8') as f:
                     self.merged_data = json.load(f)
                 return self.merged_data
-        
-        # バックアップデータソース（LaMP_all）を使用
+
         backup_path = self.data_path / "data/raw/LaMP_all/LaMP_2/user-based/dev/dev_questions.json"
         if backup_path.exists():
             logger.info(f"Using backup data source: {backup_path}")
             with open(backup_path, 'r', encoding='utf-8') as f:
                 backup_data = json.load(f)
-            
-            # LaMP_all形式をmerged形式に変換
             if isinstance(backup_data, dict) and 'instances' in backup_data:
-                self.merged_data = backup_data['instances'][:1000]  # 最初の1000サンプル
+                self.merged_data = backup_data['instances'][:1000]
                 logger.info(f"Loaded {len(self.merged_data)} samples from backup source")
                 return self.merged_data
-        
+
         raise FileNotFoundError("No valid data source found (primary or backup)")
-    
+
     def load_ground_truth(self) -> Dict[str, str]:
-        """正解データを読み込み（バックアップソース対応）"""
+        # Priority 1: Check data_path/raw/LaMP-2/answers.json first
+        primary_answers = self.data_path / "raw/LaMP-2/answers.json"
+        if primary_answers.exists():
+            logger.info(f"Loading ground truth from priority path: {primary_answers}")
+            with open(primary_answers, 'r', encoding='utf-8') as f:
+                answers_data = json.load(f)
+
+            if isinstance(answers_data, dict) and 'golds' in answers_data:
+                golds = answers_data['golds']
+                return {str(g['id']): g['output'].strip().lower() for g in golds}
+            elif isinstance(answers_data, list):
+                return {str(a['id']): a['output'].strip().lower() for a in answers_data}
+
+        # Fallback: Original path resolution for compatibility
         possible_paths = [
             self.data_path / "chameleon_prime_personalization/data/raw/LaMP-2/answers.json",
             self.data_path / "data/raw/LaMP-2/answers.json",
             self.data_path / "answers.json"
         ]
-        
-        # プライマリソース確認
         for path in possible_paths:
             if path.exists():
-                logger.info(f"Loading ground truth from: {path}")
+                logger.info(f"Loading ground truth from fallback path: {path}")
                 with open(path, 'r', encoding='utf-8') as f:
                     answers_data = json.load(f)
-                
-                # Handle different answer formats
+
                 if isinstance(answers_data, dict) and 'golds' in answers_data:
-                    # LaMP format: {"task": "...", "golds": [...]}
                     golds = answers_data['golds']
-                    return {str(gold['id']): gold['output'].strip().lower() for gold in golds}
+                    return {str(g['id']): g['output'].strip().lower() for g in golds}
                 elif isinstance(answers_data, list):
-                    # Direct list format
-                    return {str(ans['id']): ans['output'].strip().lower() for ans in answers_data}
-        
-        # バックアップ正解データを使用
+                    return {str(a['id']): a['output'].strip().lower() for a in answers_data}
+
         backup_answers_path = self.data_path / "data/raw/LaMP_all/LaMP_2/user-based/dev/dev_outputs.json"
         if backup_answers_path.exists():
             logger.info(f"Using backup ground truth: {backup_answers_path}")
             with open(backup_answers_path, 'r', encoding='utf-8') as f:
                 answers_data = json.load(f)
-            
             if isinstance(answers_data, dict) and 'golds' in answers_data:
                 golds = answers_data['golds']
-                return {str(gold['id']): gold['output'].strip().lower() for gold in golds}
-                
+                return {str(g['id']): g['output'].strip().lower() for g in golds}
+
         logger.warning("Ground truth not found, evaluation will be prediction-only")
         return {}
-    
+
     def get_user_samples(self, user_limit: int = 10) -> List[Dict]:
-        """指定ユーザー数のサンプルを取得"""
         if not self.merged_data:
             self.load_merged_data()
-        
-        # ユーザーIDごとにグループ化
+
         user_data = defaultdict(list)
         for item in self.merged_data:
-            user_id = str(item['id'])[:3]  # ID前3桁をユーザーIDとして使用
+            user_id = str(item['id'])[:3]  # 擬似ユーザーID
             user_data[user_id].append(item)
-        
-        # 指定ユーザー数まで取得
+
         selected_samples = []
-        for i, (user_id, samples) in enumerate(user_data.items()):
+        for i, (_, samples) in enumerate(user_data.items()):
             if i >= user_limit:
                 break
-            selected_samples.extend(samples[:5])  # 各ユーザーから最大5サンプル
-        
+            selected_samples.extend(samples[:5])
         logger.info(f"Selected {len(selected_samples)} samples from {min(len(user_data), user_limit)} users")
         return selected_samples
 
+
+# =========================
+# Chameleon Editor
+# =========================
 class ChameleonEditor:
     """
-    Chameleon埋め込み編集器
-    
-    機能:
-    1. Transformerモデルの中間層から埋め込み抽出
-    2. SVD方向学習
-    3. 推論時リアルタイム埋め込み編集
+    Transformerの中間出力に方向ベクトルを加算して編集する
     """
-    
-    def __init__(self, model_name: str = "meta-llama/Llama-3.2-3B-Instruct", device: str = "auto", torch_dtype: str = "float32"):
-        self.model_name = model_name
+    def __init__(self, model_name: str = "./chameleon_prime_personalization/models/base_model",
+                 device: str = "auto", torch_dtype: str = "float32"):
+        from pathlib import Path
+
+        # モデルパスを絶対化してローカル固定
+        resolved = Path(model_name).expanduser()
+        if not resolved.is_absolute():
+            # 呼び出しディレクトリ依存を断ち切る
+            resolved = (Path.cwd() / resolved).resolve()
+        if not resolved.exists():
+            raise FileNotFoundError(f"Model path not found: {resolved}")
+        self.model_name = str(resolved)
+        # --- NEW: resolve local path and force local load if exists ---
+        model_path = Path(model_name)
+        load_kwargs = {}
+        if model_path.exists():
+            model_name = str(model_path.resolve())  # use absolute path
+            load_kwargs["local_files_only"] = True  # force local
+        # -------------------------------------------------------------
         self.device = torch.device("cuda" if torch.cuda.is_available() and device == "auto" else device)
+        self._hook_calls_total = 0
+        self._hook_calls_in_this_generate = 0
         
-        # torch_dtypeの処理
+        # Enhanced diagnostics tracking
+        self._edit_ratios = []  # Track edit strength per hook call
+        self._kl_divergences = []  # Track KL divergences when available
+        self._weak_edit_warnings = 0
+        # Always enable diagnostics for proper hook tracking
+        self._diag_enable = True
+
         if torch_dtype == "float32":
             dtype = torch.float32
         elif torch_dtype == "float16":
             dtype = torch.float16
         else:
-            dtype = torch.float32  # デフォルト
-        
+            dtype = torch.float32
+
         logger.info(f"Loading model: {model_name}")
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name, local_files_only=True)
         self.model = AutoModelForCausalLM.from_pretrained(
             model_name,
             torch_dtype=dtype,
-            device_map="auto" if self.device.type == "cuda" else None
+            device_map="auto" if self.device.type == "cuda" else None,
+            local_files_only=True
         )
-        
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
-        
         self.model.eval()
-        
-        # 方向ベクトル
-        self.personal_direction = None
-        self.neutral_direction = None
-        
-        # フック用変数
-        self.extracted_embeddings = []
+
+        self.personal_direction: torch.Tensor | None = None
+        self.neutral_direction: torch.Tensor | None = None
         self.editing_hooks = []
-        
         logger.info(f"Model loaded on device: {self.device}")
-    
+
     def load_theta_vectors(self, theta_p_path: str, theta_n_path: str):
-        """事前計算されたtheta方向ベクトルを読み込み"""
         try:
             with open(theta_p_path, 'r') as f:
                 theta_p = np.array(json.load(f))
             with open(theta_n_path, 'r') as f:
                 theta_n = np.array(json.load(f))
-            
-            self.personal_direction = torch.tensor(theta_p, dtype=torch.float32, device=self.device)
-            self.neutral_direction = torch.tensor(theta_n, dtype=torch.float32, device=self.device)
-            
-            logger.info(f"Loaded theta vectors: P={theta_p.shape}, N={theta_n.shape}")
+            P = torch.tensor(theta_p, dtype=torch.float32, device=self.device).view(-1)
+            N = torch.tensor(theta_n, dtype=torch.float32, device=self.device).view(-1)
+
+            try:
+                H = int(getattr(self.model.config, "hidden_size", P.numel()))
+            except Exception:
+                H = int(P.numel())
+
+            def _fit_len_1d(v: torch.Tensor, H: int) -> torch.Tensor:
+                v = v.view(-1)
+                n = v.numel()
+                if n == H:
+                    return v
+                if n > 0 and H % n == 0:
+                    return v.repeat(H // n)[:H]
+                if n > H:
+                    return v[:H]
+                out = torch.zeros(H, dtype=v.dtype, device=v.device)
+                out[:n] = v
+                return out
+
+            self.personal_direction = _fit_len_1d(P, H)
+            self.neutral_direction  = _fit_len_1d(N, H)
+            logger.info(f"Loaded theta vectors (aligned): P={tuple(self.personal_direction.shape)}, "
+                        f"N={tuple(self.neutral_direction.shape)}, hidden_size={H}")
             return True
         except Exception as e:
             logger.error(f"Failed to load theta vectors: {e}")
             return False
-    
-    def extract_embeddings_with_hooks(self, texts: List[str], target_layers: List[str] = None) -> torch.Tensor:
-        """
-        PyTorchフックを使用してTransformer中間層から埋め込みを抽出
-        
-        Args:
-            texts: 抽出対象テキスト
-            target_layers: 対象レイヤー名（例: ["model.layers.16", "model.layers.20"]）
-        
-        Returns:
-            抽出された埋め込みテンソル
-        """
-        if target_layers is None:
-            target_layers = ["model.layers.20"]  # デフォルトレイヤー
-        
-        self.extracted_embeddings = []
-        hooks = []
-        
-        def embedding_hook(module, input, output):
-            """埋め込み抽出用フック"""
-            # output shape: (batch_size, seq_len, hidden_dim)
-            # 最後のトークンの埋め込みを抽出
-            embedding = output[0][:, -1, :].detach()  # (batch_size, hidden_dim)
-            self.extracted_embeddings.append(embedding)
-        
-        # 指定レイヤーにフックを登録
-        for layer_name in target_layers:
-            try:
-                layer = self._get_layer_by_name(layer_name)
-                hook = layer.register_forward_hook(embedding_hook)
-                hooks.append(hook)
-            except AttributeError:
-                logger.warning(f"Layer {layer_name} not found")
-        
-        try:
-            # モデル実行
-            inputs = self.tokenizer(texts, return_tensors="pt", padding=True, truncation=True, max_length=512)
-            inputs = {k: v.to(self.device) for k, v in inputs.items()}
-            
-            with torch.no_grad():
-                _ = self.model(**inputs, output_hidden_states=True)
-            
-            # 抽出された埋め込みを結合
-            if self.extracted_embeddings:
-                embeddings = torch.cat(self.extracted_embeddings, dim=1)  # 複数レイヤーを結合
-                return embeddings
-            else:
-                raise RuntimeError("No embeddings extracted")
-                
-        finally:
-            # フックを削除
-            for hook in hooks:
-                hook.remove()
-            self.extracted_embeddings = []
-    
+
     def _get_layer_by_name(self, layer_name: str):
-        """レイヤー名からレイヤーオブジェクトを取得"""
         parts = layer_name.split('.')
         layer = self.model
         for part in parts:
@@ -281,87 +291,94 @@ class ChameleonEditor:
             else:
                 layer = getattr(layer, part)
         return layer
-    
-    def register_editing_hooks(self, target_layers: List[str], alpha_personal: float, alpha_neutral: float):
-        """推論時編集用フックを登録"""
+
+    def register_editing_hooks(self, target_layers: List[str], alpha_personal: float, alpha_neutral: float, last_k_tokens: int = 0):
         if self.personal_direction is None or self.neutral_direction is None:
             raise ValueError("Direction vectors not loaded")
-        
-        def editing_hook(module, input, output):
-            """編集用フック: output += α_p * personal_dir + α_n * neutral_dir"""
-            if self.personal_direction is None or self.neutral_direction is None:
-                logger.warning("Direction vectors not loaded, skipping Chameleon editing")
-                return output
-                
+
+        def editing_hook(module, inputs, output):
+            self._hook_calls_total += 1
+            self._hook_calls_in_this_generate += 1
+
             try:
                 if isinstance(output, tuple):
                     output_tensor = output[0]
-                    has_additional_outputs = len(output) > 1
-                    additional_outputs = output[1:] if has_additional_outputs else ()
+                    extra = output[1:]
                 else:
                     output_tensor = output
-                    has_additional_outputs = False
-                    additional_outputs = ()
-                
-                # 形状とデバイス情報を取得
-                original_shape = output_tensor.shape
+                    extra = ()
+
+                shape = output_tensor.shape
                 device = output_tensor.device
                 dtype = output_tensor.dtype
-                
-                logger.debug(f"Hook debug: output_shape={original_shape}, device={device}, dtype={dtype}")
-                
-                # 隠れ次元を取得
-                if len(original_shape) == 3:
-                    batch_size, seq_len, hidden_dim = original_shape
-                elif len(original_shape) == 2:
-                    batch_size, hidden_dim = original_shape
-                    seq_len = 1
+
+                if len(shape) == 3:
+                    b, t, h = shape
+                elif len(shape) == 2:
+                    b, h = shape
+                    t = 1
                 else:
-                    logger.warning(f"Unexpected output shape: {original_shape}, skipping editing hook")
-                    return output
-                
-                # 方向ベクトルの長さチェック
-                if len(self.personal_direction) < hidden_dim or len(self.neutral_direction) < hidden_dim:
-                    logger.warning(f"Direction vectors too short ({len(self.personal_direction)}, {len(self.neutral_direction)}) for hidden_dim {hidden_dim}")
-                    return output
-                
-                # 方向ベクトルを取得して適切な形状に変換
-                personal_vec = self.personal_direction[:hidden_dim].to(device=device, dtype=dtype)
-                neutral_vec = self.neutral_direction[:hidden_dim].to(device=device, dtype=dtype)
-                
-                # スケーリング係数
-                alpha_p = torch.tensor(alpha_personal, device=device, dtype=dtype)
-                alpha_n = torch.tensor(alpha_neutral, device=device, dtype=dtype)
-                
-                # 編集ベクトルを計算（実際のテンソル形状に合わせる）
-                base_edit = alpha_p * personal_vec + alpha_n * neutral_vec
-                
-                if len(original_shape) == 3:
-                    # (batch, seq, hidden) の場合 - 実際のseq次元に合わせる
-                    batch_size, seq_len, hidden_dim = original_shape
-                    edit_vector = base_edit.view(1, 1, hidden_dim).expand(batch_size, seq_len, hidden_dim)
-                elif len(original_shape) == 2:
-                    # (batch, hidden) の場合
-                    batch_size, hidden_dim = original_shape
-                    edit_vector = base_edit.view(1, hidden_dim).expand(batch_size, hidden_dim)
+                    return output  # 不明形状
+
+                def _fit_len(v: torch.Tensor, H: int) -> torch.Tensor:
+                    v = v.to(device=device, dtype=dtype).view(-1)
+                    n = v.numel()
+                    if n == H:
+                        return v
+                    if n > 0 and H % n == 0:
+                        return v.repeat(H // n)[:H]
+                    if n > H:
+                        return v[:H]
+                    out = torch.zeros(H, dtype=dtype, device=device)
+                    out[:n] = v
+                    return out
+
+                pvec = _fit_len(self.personal_direction, h)
+                nvec = _fit_len(self.neutral_direction,  h)
+                base_edit = float(alpha_personal) * pvec + float(alpha_neutral) * nvec
+
+                if len(shape) == 3:
+                    edit = base_edit.view(1, 1, h).expand(b, t, h)
+                    
+                    # Apply last-k-tokens editing if specified
+                    if last_k_tokens > 0:
+                        k = min(last_k_tokens, t)
+                        mask = torch.zeros_like(edit)
+                        mask[:, -k:, :] = 1
+                        edit = edit * mask
+                        logger.info(f"[LAST-K] Applied editing to last {k}/{t} tokens")
                 else:
-                    # その他の形状の場合はそのまま
-                    edit_vector = base_edit
-                
-                # 埋め込み編集を適用
-                edited_output = output_tensor + edit_vector
-                
-                if has_additional_outputs:
-                    return (edited_output,) + additional_outputs
-                else:
-                    return edited_output
+                    edit = base_edit.view(1, h).expand(b, h)
+
+                edited = output_tensor + edit
+
+                # Enhanced diagnostics
+                if self._diag_enable:
+                    try:
+                        # Compute edit ratio (L2 norm ratio)
+                        edit_norm = edit.norm().item()
+                        output_norm = output_tensor.norm().item()
+                        ratio = edit_norm / (output_norm + 1e-9)
+                        self._edit_ratios.append(ratio)
+                        
+                        logger.info(f"[DIAG] edit_ratio={ratio:.4e} | alpha_p={alpha_personal:.3g} alpha_n={alpha_neutral:.3g}")
+                        
+                        # Warn about weak edits
+                        if ratio < 0.005:
+                            self._weak_edit_warnings += 1
+                            logger.warning(f"[WARN] weak_edit detected: ratio={ratio:.4e} < 0.005")
+                            
+                    except Exception as e:
+                        logger.warning(f"Error computing edit diagnostics: {e}")
+
+                if isinstance(output, tuple):
+                    return (edited,) + extra
+                return edited
 
             except Exception as e:
-                logger.warning(f"Error in editing hook: {e}, returning original output")
+                logger.warning(f"Error in editing hook: {e}. Returning original.")
                 return output
-        
-    
-        # フックを登録
+
         for layer_name in target_layers:
             try:
                 layer = self._get_layer_by_name(layer_name)
@@ -369,292 +386,288 @@ class ChameleonEditor:
                 self.editing_hooks.append(hook)
                 logger.info(f"Registered editing hook on {layer_name}")
             except AttributeError:
-                logger.warning(f"Failed to register hook on {layer_name}")
-    
+                logger.warning(f"Layer name invalid: '{layer_name}' - skipping this layer")
+                continue  # Continue with other layers
+
     def remove_editing_hooks(self):
-        """編集フックを削除"""
-        for hook in self.editing_hooks:
-            hook.remove()
+        for h in self.editing_hooks:
+            h.remove()
         self.editing_hooks = []
-    
-    def generate_with_chameleon(self, prompt: str, alpha_personal: float = 1.5, alpha_neutral: float = -0.8, 
-                               target_layers: List[str] = None, max_length: int = 50) -> str:
-        """
-        Chameleon編集を適用した生成
-        
-        Args:
-            prompt: 入力プロンプト
-            alpha_personal: パーソナル方向の強度
-            alpha_neutral: ニュートラル方向の強度
-            target_layers: 編集対象レイヤー
-            max_length: 最大生成長
-        
-        Returns:
-            生成されたテキスト
-        """
+
+    def generate_with_chameleon(self, prompt: str, alpha_personal: float = 1.5, alpha_neutral: float = -0.8,
+                                target_layers: List[str] = None, gen_kwargs: dict | None = None,
+                                target_edit_ratio: float = 0.02, edit_ratio_tolerance: float = 0.5,
+                                adaptive_alpha: bool = False, last_k_tokens: int = 0) -> str:
         if target_layers is None:
             target_layers = ["model.layers.20"]
-        
-        # 編集フックを登録
-        self.register_editing_hooks(target_layers, alpha_personal, alpha_neutral)
-        
+
+        # Reset diagnostics for this generation
+        self._hook_calls_in_this_generate = 0
+        self._edit_ratios.clear()
+        self._weak_edit_warnings = 0
+        self.register_editing_hooks(target_layers, alpha_personal, alpha_neutral, last_k_tokens)
+
         try:
             inputs = self.tokenizer(prompt, return_tensors="pt", padding=True, truncation=True)
             inputs = {k: v.to(self.device) for k, v in inputs.items()}
-            
+
+            # 1回だけ KL(before||after) を測る（診断ON時）
+            if self._diag_enable:
+                with torch.no_grad():
+                    # フックOFFで
+                    self.remove_editing_hooks()
+                    logits0 = self.model(**inputs).logits[:, -1, :]
+                    # フック再ONで
+                    self.register_editing_hooks(target_layers, alpha_personal, alpha_neutral)
+                    logits1 = self.model(**inputs).logits[:, -1, :]
+                    p = torch.log_softmax(logits0, dim=-1)
+                    q = torch.log_softmax(logits1, dim=-1)
+                    kl = torch.sum(torch.exp(p) * (p - q), dim=-1).mean().item()
+                    logger.info(f"[DIAG] KL(before||after)={kl:.4e}")
+
+            # 生成
+            if gen_kwargs is None:
+                gen_kwargs = dict(max_new_tokens=10, do_sample=False, pad_token_id=self.tokenizer.eos_token_id)
+            # None を渡さない（transformersの警告回避）
+            clean_gen = {k: v for k, v in gen_kwargs.items() if v is not None}
+
             with torch.no_grad():
-                outputs = self.model.generate(
-                    **inputs,
-                    max_new_tokens=max_length,
-                    temperature=0.1,
-                    do_sample=False,
-                    pad_token_id=self.tokenizer.eos_token_id
-                )
-            
-            # 生成されたテキストをデコード
-            generated_text = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
-            
-            # 元のプロンプト部分を除去
-            response = generated_text[len(prompt):].strip()
-            
+                outputs = self.model.generate(**inputs, **clean_gen)
+
+            text = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
+            response = text[len(prompt):].strip()
             return response
-            
+
         finally:
-            # フックを削除
+            # Log detailed diagnostics before resetting counters
+            avg_edit_ratio = np.mean(self._edit_ratios) if self._edit_ratios else 0.0
+            
+            # Adaptive alpha scaling logic
+            suggested_alpha = alpha_personal
+            self._suggested_alpha = alpha_personal  # Default value
+            
+            if adaptive_alpha and avg_edit_ratio > 0:
+                lower = target_edit_ratio * (1 - edit_ratio_tolerance)
+                upper = target_edit_ratio * (1 + edit_ratio_tolerance)
+                
+                if avg_edit_ratio < lower:
+                    suggested_alpha = alpha_personal * min(3.0, max(1.05, lower / max(avg_edit_ratio, 1e-8)))
+                    logger.info(f"[ADAPTIVE] Edit ratio {avg_edit_ratio:.4e} < target {target_edit_ratio:.4e}, suggesting alpha increase: {alpha_personal:.3f} → {suggested_alpha:.3f}")
+                elif avg_edit_ratio > upper:
+                    suggested_alpha = alpha_personal * max(0.2, min(0.95, upper / avg_edit_ratio))
+                    logger.info(f"[ADAPTIVE] Edit ratio {avg_edit_ratio:.4e} > target {target_edit_ratio:.4e}, suggesting alpha decrease: {alpha_personal:.3f} → {suggested_alpha:.3f}")
+                else:
+                    logger.info(f"[ADAPTIVE] Edit ratio {avg_edit_ratio:.4e} within target range [{lower:.4e}, {upper:.4e}], keeping alpha={alpha_personal:.3f}")
+                    
+                self._suggested_alpha = suggested_alpha
+            
+            logger.info(f"[DIAG] Generation complete: hook_calls={self._hook_calls_in_this_generate}, avg_edit_ratio={avg_edit_ratio:.4e}, edit_count={len(self._edit_ratios)}, suggested_alpha={suggested_alpha:.3f}")
+            
+            # Validation checks
+            if len(target_layers) > 0 and self._hook_calls_in_this_generate == 0:
+                logger.warning(f"[BUG] NO hooks fired! Expected {len(target_layers)} layers, got 0 hook calls")
+            elif len(target_layers) > 0 and self._hook_calls_in_this_generate < len(target_layers):
+                logger.warning(f"[BUG] Some hooks not firing: expected {len(target_layers)}, got {self._hook_calls_in_this_generate}")
+            
+            # Don't reset here - let the caller collect diagnostics first
+            # self._hook_calls_in_this_generate = 0  # Moved to after collection
             self.remove_editing_hooks()
 
+
+# =========================
+# Evaluation Engine
+# =========================
 class EvaluationEngine:
     """ベースライン vs Chameleon比較評価エンジン"""
-    
     def __init__(self, chameleon_editor: ChameleonEditor):
         self.chameleon_editor = chameleon_editor
-    
+        self.parent = None  # ChameleonEvaluator が設定する
+
     def calculate_exact_match(self, predictions: List[str], ground_truths: List[str]) -> float:
-        """完全一致率を計算"""
         if not ground_truths:
             return 0.0
         return sum(p.strip().lower() == g.strip().lower() for p, g in zip(predictions, ground_truths)) / len(ground_truths)
-    
+
     def calculate_bleu_score(self, predictions: List[str], ground_truths: List[str]) -> float:
-        """BLEU スコアを計算"""
         if not NLTK_AVAILABLE or not ground_truths:
             return 0.0
-        
         smoothing = SmoothingFunction().method1
         scores = []
-        
         for pred, truth in zip(predictions, ground_truths):
-            pred_tokens = pred.strip().lower().split()
-            truth_tokens = [truth.strip().lower().split()]  # リストのリストにする
-            
-            if len(pred_tokens) > 0 and len(truth_tokens[0]) > 0:
-                score = sentence_bleu(truth_tokens, pred_tokens, smoothing_function=smoothing)
-                scores.append(score)
-        
-        return np.mean(scores) if scores else 0.0
-    
-    def evaluate_baseline(self, test_samples: List[Dict], ground_truth: Dict[str, str]) -> EvaluationResult:
-        """ベースライン（編集なし）の評価"""
-        logger.info("Starting baseline evaluation...")
-        
-        predictions = []
-        matched_ground_truths = []
-        start_time = time.time()
-        
-        for i, sample in enumerate(test_samples):
-            logger.info(f"Baseline progress: {i+1}/{len(test_samples)}")
-            
-            prompt = f"Given the following movie description, provide a single word tag that best describes the movie:\n\nMovie: {sample['input']}\n\nTag:"
-            
-            # 通常の生成（編集なし）
-            inputs = self.chameleon_editor.tokenizer(prompt, return_tensors="pt", padding=True, truncation=True)
-            inputs = {k: v.to(self.chameleon_editor.device) for k, v in inputs.items()}
-            
-            with torch.no_grad():
-                outputs = self.chameleon_editor.model.generate(
-                    **inputs,
-                    max_new_tokens=10,
-                    temperature=0.1,
-                    do_sample=False,
-                    pad_token_id=self.chameleon_editor.tokenizer.eos_token_id
-                )
-            
-            generated_text = self.chameleon_editor.tokenizer.decode(outputs[0], skip_special_tokens=True)
-            prediction = generated_text[len(prompt):].strip().lower()
-            
-            # 最初の単語のみ抽出
-            prediction = prediction.split()[0] if prediction.split() else "unknown"
-            predictions.append(prediction)
-            
-            # 正解データがあれば追加
-            sample_id = str(sample['id'])
-            if sample_id in ground_truth:
-                matched_ground_truths.append(ground_truth[sample_id])
-        
+            pt = pred.strip().lower().split()
+            tt = [truth.strip().lower().split()]
+            if pt and tt[0]:
+                scores.append(sentence_bleu(tt, pt, smoothing_function=smoothing))
+        return float(np.mean(scores)) if scores else 0.0
+
+    def _finalize_metrics(self, predictions: List[str], ground_truth: Dict[str, str],
+                          start_time: float, name: str) -> EvaluationResult:
+        matched_truths: List[str] = []
+        matched_preds: List[str] = []
+        for p, sample in zip(predictions, self.parent.test_samples_cache):
+            sid = str(sample['id'])
+            if sid in ground_truth:
+                matched_truths.append(ground_truth[sid])
+                matched_preds.append(p)
+
         inference_time = time.time() - start_time
-        
-        # メトリクス計算
-        exact_match = self.calculate_exact_match(predictions, matched_ground_truths)
-        bleu_score = self.calculate_bleu_score(predictions, matched_ground_truths)
-        
-        # 分類メトリクス
-        if matched_ground_truths:
-            # Standard library implementation
-            correct_predictions = sum(p == g for p, g in zip(predictions[:len(matched_ground_truths)], matched_ground_truths))
-            accuracy = correct_predictions / len(matched_ground_truths) if matched_ground_truths else 0.0
-            
-            # Simple precision/recall/f1 calculation
-            precision = recall = f1 = accuracy  # Simplified for demo
-        else:
-            precision = recall = f1 = accuracy = 0.0
-            correct_predictions = 0
-            correct_predictions = 0
-        
+        correct = sum(int(p == g) for p, g in zip(matched_preds, matched_truths))
+        acc = correct / len(matched_truths) if matched_truths else 0.0
+        exact = self.calculate_exact_match(matched_preds, matched_truths)
+        bleu = self.calculate_bleu_score(matched_preds, matched_truths)
+
+        # 簡易: precision/recall/f1 を accuracy と同一に置く（分類器でないため）
+        prec = rec = f1 = acc
+
         return EvaluationResult(
-            method_name="Baseline",
-            accuracy=accuracy,
-            exact_match=exact_match,
-            bleu_score=bleu_score,
-            precision=precision,
-            recall=recall,
+            method_name=name,
+            accuracy=acc,
+            exact_match=exact,
+            bleu_score=bleu,
+            precision=prec,
+            recall=rec,
             f1_score=f1,
             inference_time=inference_time,
-            total_samples=len(predictions),
-            correct_predictions=correct_predictions,
-            predictions=predictions,
-            ground_truths=matched_ground_truths
+            total_samples=len(matched_truths),
+            correct_predictions=correct,
+            predictions=matched_preds,
+            ground_truths=matched_truths
         )
-    
+
+    def evaluate_baseline(self, test_samples: List[Dict], ground_truth: Dict[str, str]) -> EvaluationResult:
+        logger.info("Starting baseline evaluation...")
+        predictions: List[str] = []
+        start = time.time()
+
+        for i, sample in enumerate(test_samples):
+            logger.info(f"Baseline progress: {i+1}/{len(test_samples)}")
+            prompt = f"Given the following movie description, provide a single word tag that best describes the movie:\n\nMovie: {sample['input']}\n\nTag:"
+            inputs = self.chameleon_editor.tokenizer(prompt, return_tensors="pt", padding=True, truncation=True)
+            inputs = {k: v.to(self.chameleon_editor.device) for k, v in inputs.items()}
+
+            clean_gen = {k: v for k, v in self.parent.gen_kwargs.items() if v is not None}
+            with torch.no_grad():
+                outputs = self.chameleon_editor.model.generate(**inputs, **clean_gen)
+
+            gen = self.chameleon_editor.tokenizer.decode(outputs[0], skip_special_tokens=True)
+            pred = (gen[len(prompt):].strip().lower().split() or ["unknown"])[0]
+            predictions.append(pred)
+
+        return self._finalize_metrics(predictions, ground_truth, start, "Baseline")
+
     def evaluate_chameleon(self, test_samples: List[Dict], ground_truth: Dict[str, str],
-                          alpha_personal: float = 1.5, alpha_neutral: float = -0.8, 
-                          target_layers: List[str] = None) -> EvaluationResult:
-        """Chameleon手法の評価"""
+                           alpha_personal: float = 1.5, alpha_neutral: float = -0.8,
+                           target_layers: List[str] = None,
+                           target_edit_ratio: float = 0.02, edit_ratio_tolerance: float = 0.5,
+                           adaptive_alpha: bool = False, last_k_tokens: int = 0) -> EvaluationResult:
         logger.info(f"Starting Chameleon evaluation (α_p={alpha_personal}, α_n={alpha_neutral})...")
-        
-        predictions = []
-        matched_ground_truths = []
-        start_time = time.time()
-        
+        predictions: List[str] = []
+        suggested_alphas: List[float] = []  # Track suggested alpha per sample
+        start = time.time()
+
         for i, sample in enumerate(test_samples):
             logger.info(f"Chameleon progress: {i+1}/{len(test_samples)}")
-            
             prompt = f"Given the following movie description, provide a single word tag that best describes the movie:\n\nMovie: {sample['input']}\n\nTag:"
-            
-            # Chameleon編集を適用した生成
-            response = self.chameleon_editor.generate_with_chameleon(
+            resp = self.chameleon_editor.generate_with_chameleon(
                 prompt=prompt,
                 alpha_personal=alpha_personal,
                 alpha_neutral=alpha_neutral,
                 target_layers=target_layers,
-                max_length=10
+                gen_kwargs=self.parent.gen_kwargs,
+                target_edit_ratio=target_edit_ratio,
+                edit_ratio_tolerance=edit_ratio_tolerance,
+                adaptive_alpha=adaptive_alpha,
+                last_k_tokens=last_k_tokens
             )
+            pred = (resp.strip().lower().split() or ["unknown"])[0]
+            predictions.append(pred)
             
-            # 最初の単語のみ抽出
-            prediction = response.split()[0] if response.split() else "unknown"
-            prediction = prediction.lower()
-            predictions.append(prediction)
+            # Collect diagnostics from this generation (before hook reset)
+            if hasattr(self.chameleon_editor, '_edit_ratios') and self.chameleon_editor._edit_ratios:
+                self.parent.evaluation_diagnostics['edit_ratios'].extend(self.chameleon_editor._edit_ratios.copy())
             
-            # 正解データがあれば追加
-            sample_id = str(sample['id'])
-            if sample_id in ground_truth:
-                matched_ground_truths.append(ground_truth[sample_id])
-        
-        inference_time = time.time() - start_time
-        
-        # メトリクス計算
-        exact_match = self.calculate_exact_match(predictions, matched_ground_truths)
-        bleu_score = self.calculate_bleu_score(predictions, matched_ground_truths)
-        
-        # 分類メトリクス
-        if matched_ground_truths:
-            # Standard library implementation
-            correct_predictions = sum(p == g for p, g in zip(predictions[:len(matched_ground_truths)], matched_ground_truths))
-            accuracy = correct_predictions / len(matched_ground_truths) if matched_ground_truths else 0.0
+            # Get hook calls before they are reset to 0 in finally block
+            hook_calls_this_gen = getattr(self.chameleon_editor, '_hook_calls_in_this_generate', 0)
+            self.parent.evaluation_diagnostics['hook_calls'].append(hook_calls_this_gen)
             
-            # Simple precision/recall/f1 calculation
-            precision = recall = f1 = accuracy  # Simplified for demo
-        else:
-            precision = recall = f1 = accuracy = 0.0
-            correct_predictions = 0
-            correct_predictions = 0
-        
-        return EvaluationResult(
-            method_name="Chameleon",
-            accuracy=accuracy,
-            exact_match=exact_match,
-            bleu_score=bleu_score,
-            precision=precision,
-            recall=recall,
-            f1_score=f1,
-            inference_time=inference_time,
-            total_samples=len(predictions),
-            correct_predictions=correct_predictions,
-            predictions=predictions,
-            ground_truths=matched_ground_truths
-        )
-    
-    def statistical_significance_test(self, baseline_results: EvaluationResult, 
-                                    chameleon_results: EvaluationResult) -> Dict[str, float]:
-        """統計的有意性検定"""
-        if len(baseline_results.ground_truths) < 2 or len(chameleon_results.ground_truths) < 2:
-            return {"p_value": 1.0, "improvement_rate": 0.0}
-        
-        # 各サンプルの正解/不正解を計算 (booleanを数値に変換)
-        baseline_correct = np.array([int(p == g) for p, g in zip(baseline_results.predictions, baseline_results.ground_truths)])
-        chameleon_correct = np.array([int(p == g) for p, g in zip(chameleon_results.predictions, chameleon_results.ground_truths)])
-        
-        # 対応サンプルのt検定
-        if len(baseline_correct) == len(chameleon_correct):
-            _, p_value = stats.ttest_rel(chameleon_correct, baseline_correct)
-        else:
-            _, p_value = stats.ttest_ind(chameleon_correct, baseline_correct)
-        
-        # 改善率計算
-        improvement_rate = (chameleon_results.accuracy - baseline_results.accuracy) / baseline_results.accuracy if baseline_results.accuracy > 0 else 0.0
-        
-        return {
-            "p_value": p_value,
-            "improvement_rate": improvement_rate,
-            "baseline_accuracy": baseline_results.accuracy,
-            "chameleon_accuracy": chameleon_results.accuracy
-        }
+            # Collect suggested alpha if available
+            suggested_alpha = getattr(self.chameleon_editor, '_suggested_alpha', alpha_personal)
+            suggested_alphas.append(suggested_alpha)
+            
+            # Reset the counter after collection
+            self.chameleon_editor._hook_calls_in_this_generate = 0
+            
+            # Log per-sample diagnostics for debugging
+            avg_edit_ratio = np.mean(self.chameleon_editor._edit_ratios) if hasattr(self.chameleon_editor, '_edit_ratios') and self.chameleon_editor._edit_ratios else 0.0
+            logger.info(f"Sample {i+1}: hook_calls={hook_calls_this_gen}, avg_edit_ratio={avg_edit_ratio:.4e}, suggested_alpha={suggested_alpha:.3f}")
 
+        # Store suggested alphas in diagnostics for CSV
+        self.parent.evaluation_diagnostics['suggested_alphas'] = suggested_alphas
+        
+        return self._finalize_metrics(predictions, ground_truth, start, "Chameleon")
+
+
+# =========================
+# Orchestrator
+# =========================
 class ChameleonEvaluator:
     """Chameleon LaMP-2 評価システムのメインクラス"""
-    
-    def __init__(self, config_path: str = None, data_path: str = "./"):
-        # 設定読み込み
+    def __init__(self, config_path: str | None, data_path: str, decoding_mode: str = "greedy"):
         self.config = self._load_config(config_path)
         self.data_path = Path(data_path)
         self.output_dir = Path(self.config.get('output_dir', './results'))
         self.output_dir.mkdir(exist_ok=True)
-        
-        # コンポーネント初期化
+
+        # decoding setup
+        self.decoding_mode = decoding_mode
+        use_sample = (decoding_mode == "sample")
+        # None は渡さないため、後でフィルタ
+        self.gen_kwargs = dict(
+            max_new_tokens=10,
+            do_sample=use_sample,
+            temperature=(0.7 if use_sample else None),
+            top_p=(0.9 if use_sample else None),
+            pad_token_id=None  # 後で tokenizer.eos に差し替え
+        )
+
+        # components
         self.data_loader = LaMPDataLoader(data_path)
         self.chameleon_editor = ChameleonEditor(
             model_name=self.config['model']['name'],
             device=self.config['model'].get('device', 'auto'),
             torch_dtype=self.config['model'].get('torch_dtype', 'float32')
         )
+        # pad_token_id の確定
+        self.gen_kwargs['pad_token_id'] = self.chameleon_editor.tokenizer.eos_token_id
+        
+        # Diagnostic aggregation
+        self.evaluation_diagnostics = {
+            'edit_ratios': [],
+            'hook_calls': [],
+            'kl_divergences': []
+        }
+
         self.evaluation_engine = EvaluationEngine(self.chameleon_editor)
-        
-        # Theta方向ベクトル読み込み
+        self.evaluation_engine.parent = self
+
+        # theta
         self._load_theta_vectors()
-        
-        logger.info("Chameleon Evaluator initialized successfully")
-    
-    def _load_config(self, config_path: str) -> Dict:
-        """設定ファイル読み込み"""
+
+        # cache
+        self.test_samples_cache: List[Dict] = []
+        logger.info(f"Chameleon Evaluator initialized (decoding={self.decoding_mode})")
+
+    def _load_config(self, config_path: str | None) -> Dict:
         default_config = {
             'model': {
-                'name': 'meta-llama/Llama-3.2-3B-Instruct',
+                'name': './chameleon_prime_personalization/models/base_model',
                 'device': 'auto',
                 'max_length': 512,
                 'batch_size': 4
             },
             'chameleon': {
                 'num_self_generated': 10,
-                'target_layers': ['model.layers.16', 'model.layers.20'],
+                'target_layers': ['model.layers.20'],
                 'alpha_personal': 1.5,
                 'alpha_general': -0.8
             },
@@ -664,180 +677,334 @@ class ChameleonEvaluator:
             },
             'output_dir': './results'
         }
-        
         if config_path and Path(config_path).exists():
             with open(config_path, 'r') as f:
-                config = yaml.safe_load(f)
-            # デフォルト設定とマージ
-            for key, value in default_config.items():
-                if key not in config:
-                    config[key] = value
-                elif isinstance(value, dict):
-                    for subkey, subvalue in value.items():
-                        if subkey not in config[key]:
-                            config[key][subkey] = subvalue
-            return config
+                cfg = yaml.safe_load(f)
+            for k, v in default_config.items():
+                if k not in cfg:
+                    cfg[k] = v
+                elif isinstance(v, dict):
+                    for kk, vv in v.items():
+                        if kk not in cfg[k]:
+                            cfg[k][kk] = vv
+            return cfg
         else:
             logger.info("Using default configuration")
             return default_config
-    
+
     def _load_theta_vectors(self):
-        """Theta方向ベクトルを読み込み"""
         theta_paths = [
             (self.data_path / "processed/LaMP-2/theta_p.json", self.data_path / "processed/LaMP-2/theta_n.json"),
             (Path("processed/LaMP-2/theta_p.json"), Path("processed/LaMP-2/theta_n.json"))
         ]
-        
-        for theta_p_path, theta_n_path in theta_paths:
-            if theta_p_path.exists() and theta_n_path.exists():
-                success = self.chameleon_editor.load_theta_vectors(str(theta_p_path), str(theta_n_path))
-                if success:
+        for tp, tn in theta_paths:
+            if tp.exists() and tn.exists():
+                if self.chameleon_editor.load_theta_vectors(str(tp), str(tn)):
                     logger.info("Theta vectors loaded successfully")
                     return
-        
         logger.warning("Theta vectors not found - Chameleon evaluation will be limited")
-    
-    def run_evaluation(self, mode: str = "full") -> Dict[str, Any]:
-        """
-        評価実行
-        
-        Args:
-            mode: 実行モード ("demo", "full", "ablation")
-        
-        Returns:
-            評価結果辞書
-        """
-        logger.info(f"=== Chameleon LaMP-2 Evaluation ({mode} mode) ===")
-        
-        # データ読み込み
+
+    def run_evaluation(self, mode: str = "full", alpha_override: float = None, 
+                      beta_override: float = None, layers_override: List[str] = None,
+                      target_edit_ratio: float = 0.02, edit_ratio_tolerance: float = 0.5,
+                      adaptive_alpha: bool = False, last_k_tokens: int = 0,
+                      max_users_override: int = None) -> Dict[str, Any]:
+        logger.info(f"=== Chameleon LaMP-2 Evaluation ({mode} mode, decoding={self.decoding_mode}) ===")
+
         if mode == "demo":
             user_limit = 3
         elif mode == "full":
-            user_limit = self.config['evaluation']['max_users']
+            user_limit = max_users_override if max_users_override is not None else self.config['evaluation']['max_users']
         else:
             user_limit = 10
-        
+
         test_samples = self.data_loader.get_user_samples(user_limit)
+        self.test_samples_cache = test_samples  # metrics用
         ground_truth = self.data_loader.load_ground_truth()
-        
         logger.info(f"Evaluating {len(test_samples)} samples from {user_limit} users")
-        
-        # 評価実行
-        results = {}
-        
-        # ベースライン評価
-        baseline_result = self.evaluation_engine.evaluate_baseline(test_samples, ground_truth)
-        results['baseline'] = baseline_result
-        
-        # Chameleon評価
+
+        results: Dict[str, Any] = {}
+        baseline = self.evaluation_engine.evaluate_baseline(test_samples, ground_truth)
+        results['baseline'] = baseline
+
         if self.chameleon_editor.personal_direction is not None:
-            chameleon_result = self.evaluation_engine.evaluate_chameleon(
-                test_samples, ground_truth,
-                alpha_personal=self.config['chameleon']['alpha_personal'],
-                alpha_neutral=self.config['chameleon']['alpha_general'],
-                target_layers=self.config['chameleon']['target_layers']
-            )
-            results['chameleon'] = chameleon_result
+            # Use CLI overrides if provided, otherwise use config
+            alpha_p = alpha_override if alpha_override is not None else self.config['chameleon']['alpha_personal']
+            alpha_n = beta_override if beta_override is not None else self.config['chameleon']['alpha_general']
+            layers = layers_override if layers_override is not None else self.config['chameleon']['target_layers']
             
-            # 統計的有意性検定
-            significance = self.evaluation_engine.statistical_significance_test(baseline_result, chameleon_result)
-            results['significance'] = significance
+            chameleon = self.evaluation_engine.evaluate_chameleon(
+                test_samples, ground_truth,
+                alpha_personal=alpha_p,
+                alpha_neutral=alpha_n,
+                target_layers=layers,
+                target_edit_ratio=target_edit_ratio,
+                edit_ratio_tolerance=edit_ratio_tolerance,
+                adaptive_alpha=adaptive_alpha,
+                last_k_tokens=last_k_tokens
+            )
+            results['chameleon'] = chameleon
+
+            # significance
+            if baseline.total_samples >= 2 and chameleon.total_samples >= 2:
+                b_correct = np.array([int(p == g) for p, g in zip(baseline.predictions, baseline.ground_truths)])
+                c_correct = np.array([int(p == g) for p, g in zip(chameleon.predictions, chameleon.ground_truths)])
+                if len(b_correct) == len(c_correct):
+                    _, p_value = stats.ttest_rel(c_correct, b_correct)
+                else:
+                    _, p_value = stats.ttest_ind(c_correct, b_correct)
+            else:
+                p_value = 1.0
+
+            imp_rate = (chameleon.accuracy - baseline.accuracy) / baseline.accuracy if baseline.accuracy > 0 else 0.0
+            results['significance'] = {
+                "p_value": float(p_value),
+                "improvement_rate": float(imp_rate),
+                "baseline_accuracy": float(baseline.accuracy),
+                "chameleon_accuracy": float(chameleon.accuracy)
+            }
         else:
             logger.warning("Chameleon evaluation skipped - theta vectors not available")
+
+        # Write CSV results 
+        self._write_csv_results(results, mode, alpha_override, beta_override, layers_override,
+                               target_edit_ratio, edit_ratio_tolerance, adaptive_alpha, last_k_tokens)
         
-        # 結果保存
         self._save_results(results)
-        self._generate_report(results)
-        
+        self._print_report(results)
         return results
-    
-    def _save_results(self, results: Dict[str, Any]):
-        """結果をJSONで保存"""
-        timestamp = time.strftime("%Y%m%d_%H%M%S")
-        result_dir = self.output_dir / f"evaluation_{timestamp}"
-        result_dir.mkdir(exist_ok=True)
+
+    def _write_csv_results(self, results: Dict[str, Any], mode: str, alpha_override: float = None, 
+                          beta_override: float = None, layers_override: List[str] = None,
+                          target_edit_ratio: float = 0.02, edit_ratio_tolerance: float = 0.5,
+                          adaptive_alpha: bool = False, last_k_tokens: int = 0):
+        """Write evaluation results to CSV file"""
+        csv_file = self.output_dir / "experiment_results.csv"
         
-        # 結果辞書をシリアライズ可能な形式に変換
-        serializable_results = {}
-        for method, result in results.items():
-            if isinstance(result, EvaluationResult):
-                serializable_results[method] = {
-                    'method_name': result.method_name,
-                    'accuracy': float(result.accuracy),
-                    'exact_match': float(result.exact_match),
-                    'bleu_score': float(result.bleu_score),
-                    'precision': float(result.precision),
-                    'recall': float(result.recall),
-                    'f1_score': float(result.f1_score),
-                    'inference_time': float(result.inference_time),
-                    'total_samples': int(result.total_samples),
-                    'correct_predictions': int(result.correct_predictions),
-                    'predictions': result.predictions,
-                    'ground_truths': result.ground_truths
-                }
-            else:
-                serializable_results[method] = result
+        # Prepare row data
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         
-        # JSON保存
-        with open(result_dir / "results.json", 'w', encoding='utf-8') as f:
-            json.dump(serializable_results, f, indent=2, ensure_ascii=False)
-        
-        logger.info(f"Results saved to: {result_dir}")
-    
-    def _generate_report(self, results: Dict[str, Any]):
-        """評価レポート生成"""
-        print("\n" + "=" * 60)
-        print("🎯 Chameleon LaMP-2 Evaluation Results")
-        print("=" * 60)
+        # Get parameters used
+        alpha_p = alpha_override if alpha_override is not None else self.config['chameleon']['alpha_personal']
+        alpha_n = beta_override if beta_override is not None else self.config['chameleon']['alpha_general']
+        layers = layers_override if layers_override is not None else self.config['chameleon']['target_layers']
+        layers_str = ','.join(layers) if isinstance(layers, list) else str(layers)
         
         baseline = results.get('baseline')
         chameleon = results.get('chameleon')
         significance = results.get('significance', {})
         
-        if baseline:
-            print(f"\n📊 Baseline Performance:")
-            print(f"   Accuracy:     {baseline.accuracy:.4f}")
-            print(f"   Exact Match:  {baseline.exact_match:.4f}")
-            print(f"   BLEU Score:   {baseline.bleu_score:.4f}")
-            print(f"   F1 Score:     {baseline.f1_score:.4f}")
-            print(f"   Inference:    {baseline.inference_time:.2f}s")
+        # Compute diagnostic aggregates
+        avg_edit_ratio = np.mean(self.evaluation_diagnostics['edit_ratios']) if self.evaluation_diagnostics['edit_ratios'] else 0.0
+        avg_kl = np.mean(self.evaluation_diagnostics['kl_divergences']) if self.evaluation_diagnostics['kl_divergences'] else 0.0
+        hook_calls_mean = np.mean(self.evaluation_diagnostics['hook_calls']) if self.evaluation_diagnostics['hook_calls'] else 0.0
+        suggested_alpha_mean = np.mean(self.evaluation_diagnostics['suggested_alphas']) if 'suggested_alphas' in self.evaluation_diagnostics and self.evaluation_diagnostics['suggested_alphas'] else alpha_p
         
-        if chameleon:
-            print(f"\n🦎 Chameleon Performance:")
-            print(f"   Accuracy:     {chameleon.accuracy:.4f}")
-            print(f"   Exact Match:  {chameleon.exact_match:.4f}")
-            print(f"   BLEU Score:   {chameleon.bleu_score:.4f}")
-            print(f"   F1 Score:     {chameleon.f1_score:.4f}")
-            print(f"   Inference:    {chameleon.inference_time:.2f}s")
+        row = {
+            'timestamp': timestamp,
+            'mode': mode,
+            'gen': self.decoding_mode,
+            'layers': layers_str,
+            'alpha': alpha_p,
+            'beta': alpha_n,
+            'baseline_acc': baseline.accuracy if baseline else 0.0,
+            'baseline_em': baseline.exact_match if baseline else 0.0,
+            'baseline_bleu': baseline.bleu_score if baseline else 0.0,
+            'baseline_f1': baseline.f1_score if baseline else 0.0,
+            'baseline_time': baseline.inference_time if baseline else 0.0,
+            'cham_acc': chameleon.accuracy if chameleon else 0.0,
+            'cham_em': chameleon.exact_match if chameleon else 0.0,
+            'cham_bleu': chameleon.bleu_score if chameleon else 0.0,
+            'cham_f1': chameleon.f1_score if chameleon else 0.0,
+            'cham_time': chameleon.inference_time if chameleon else 0.0,
+            'impr_abs_acc': (chameleon.accuracy - baseline.accuracy) if (baseline and chameleon) else 0.0,
+            'impr_rel_acc_pct': (((chameleon.accuracy - baseline.accuracy) / baseline.accuracy * 100) if (baseline and chameleon and baseline.accuracy > 0) else 0.0),
+            'p_value': significance.get('p_value', 1.0),
+            'avg_edit_ratio': avg_edit_ratio,
+            'avg_kl': avg_kl,
+            'hook_calls_mean': hook_calls_mean,
+            'target_edit_ratio': target_edit_ratio,
+            'edit_ratio_tolerance': edit_ratio_tolerance,
+            'adaptive_alpha': adaptive_alpha,
+            'suggested_alpha': suggested_alpha_mean,
+            'last_k_tokens': last_k_tokens
+        }
         
-        if baseline and chameleon and significance:
-            improvement = significance.get('improvement_rate', 0.0) * 100
-            p_value = significance.get('p_value', 1.0)
+        # Write header if file doesn't exist
+        file_exists = csv_file.exists()
+        with open(csv_file, 'a', newline='') as f:
+            writer = csv.DictWriter(f, fieldnames=row.keys())
+            if not file_exists:
+                writer.writeheader()
+            writer.writerow(row)
+        
+        logger.info(f"Results written to CSV: {csv_file}")
+        logger.info(f"[SUMMARY] avg_edit_ratio={avg_edit_ratio:.4e}, hook_calls_mean={hook_calls_mean:.1f}")
+        
+        # Acceptance checks
+        self._run_acceptance_checks(results, avg_edit_ratio, hook_calls_mean, layers)
+
+    def _run_acceptance_checks(self, results: Dict[str, Any], avg_edit_ratio: float, 
+                              hook_calls_mean: float, layers):
+        """Run acceptance checks and validation alerts"""
+        baseline = results.get('baseline')
+        chameleon = results.get('chameleon')
+        
+        if not (baseline and chameleon):
+            return
             
-            print(f"\n📈 Improvement Analysis:")
-            print(f"   Improvement Rate: {improvement:+.1f}%")
-            print(f"   Statistical Significance: p = {p_value:.4f}")
-            
-            if p_value < 0.05:
-                print(f"   ✅ Statistically significant improvement!")
+        num_layers = len(layers) if isinstance(layers, list) else 1
+        
+        # Check for insensitive model outputs
+        metrics_identical = (
+            abs(baseline.accuracy - chameleon.accuracy) < 1e-6 and
+            abs(baseline.exact_match - chameleon.exact_match) < 1e-6 and
+            abs(baseline.bleu_score - chameleon.bleu_score) < 1e-6 and
+            abs(baseline.f1_score - chameleon.f1_score) < 1e-6
+        )
+        
+        if metrics_identical and avg_edit_ratio >= 0.02 and hook_calls_mean >= num_layers:
+            logger.warning("[ALERT] Model outputs insensitive to current edits - "
+                          f"all metrics identical but avg_edit_ratio={avg_edit_ratio:.4e} >= 0.02 "
+                          f"and hook_calls_mean={hook_calls_mean:.1f} >= {num_layers}")
+        
+        # Check for hooks not firing
+        if hook_calls_mean < num_layers:
+            logger.warning(f"[BUG] Hooks not firing for some layers: "
+                          f"expected {num_layers}, got mean {hook_calls_mean:.1f}")
+        
+        # Check for weak edits across the evaluation
+        if avg_edit_ratio < 0.005:
+            logger.warning(f"[WARN] Consistently weak edits across evaluation: "
+                          f"avg_edit_ratio={avg_edit_ratio:.4e} < 0.005")
+        
+        # Log success/failure of improvement
+        improvement = chameleon.accuracy - baseline.accuracy
+        if improvement >= 0.02:
+            logger.info(f"[SUCCESS] Significant accuracy improvement: {improvement:+.4f} >= +0.02")
+        elif improvement > 0:
+            logger.info(f"[PARTIAL] Minor accuracy improvement: {improvement:+.4f}")
+        else:
+            logger.warning(f"[FAIL] No accuracy improvement: {improvement:+.4f}")
+
+    def _save_results(self, results: Dict[str, Any]):
+        ts = time.strftime("%Y%m%d_%H%M%S")
+        outdir = self.output_dir / f"evaluation_{ts}"
+        outdir.mkdir(exist_ok=True)
+
+        serializable = {}
+        for k, v in results.items():
+            if isinstance(v, EvaluationResult):
+                serializable[k] = {
+                    'method_name': v.method_name,
+                    'accuracy': float(v.accuracy),
+                    'exact_match': float(v.exact_match),
+                    'bleu_score': float(v.bleu_score),
+                    'precision': float(v.precision),
+                    'recall': float(v.recall),
+                    'f1_score': float(v.f1_score),
+                    'inference_time': float(v.inference_time),
+                    'total_samples': int(v.total_samples),
+                    'correct_predictions': int(v.correct_predictions),
+                    'predictions': v.predictions,
+                    'ground_truths': v.ground_truths
+                }
             else:
-                print(f"   ⚠️  No significant improvement detected")
-        
+                serializable[k] = v
+
+        with open(outdir / "results.json", "w", encoding="utf-8") as f:
+            json.dump(serializable, f, indent=2, ensure_ascii=False)
+        logger.info(f"Results saved to: {outdir}")
+
+    def _print_report(self, results: Dict[str, Any]):
+        print("\n" + "=" * 60)
+        print("🎯 Chameleon LaMP-2 Evaluation Results")
+        print("=" * 60)
+
+        b = results.get('baseline')
+        c = results.get('chameleon')
+        sig = results.get('significance', {})
+
+        if b:
+            print(f"\n📊 Baseline Performance:")
+            print(f"   Accuracy:     {b.accuracy:.4f}")
+            print(f"   Exact Match:  {b.exact_match:.4f}")
+            print(f"   BLEU Score:   {b.bleu_score:.4f}")
+            print(f"   F1 Score:     {b.f1_score:.4f}")
+            print(f"   Inference:    {b.inference_time:.2f}s")
+
+        if c:
+            print(f"\n🦎 Chameleon Performance:")
+            print(f"   Accuracy:     {c.accuracy:.4f}")
+            print(f"   Exact Match:  {c.exact_match:.4f}")
+            print(f"   BLEU Score:   {c.bleu_score:.4f}")
+            print(f"   F1 Score:     {c.f1_score:.4f}")
+            print(f"   Inference:    {c.inference_time:.2f}s")
+
+        if b and c and sig:
+            imp = sig.get("improvement_rate", 0.0) * 100
+            p_value = sig.get("p_value", 1.0)
+            print(f"\n📈 Improvement Analysis:")
+            print(f"   Improvement Rate: {imp:+.1f}%")
+            print(f"   Statistical Significance: p = {p_value:.4f}")
+            if p_value < 0.05:
+                if c.accuracy > b.accuracy:
+                    print("   ✅ Statistically significant improvement!")
+                elif c.accuracy < b.accuracy:
+                    print("   ❌ Statistically significant degradation!")
+                else:
+                    print("   ⚠️  Significant difference detected but same accuracy (check metrics)")
+            else:
+                print("   ⚠️  No significant difference detected")
         print("\n" + "=" * 60)
 
+
+# =========================
+# Main
+# =========================
 if __name__ == "__main__":
     import argparse
-    
     parser = argparse.ArgumentParser(description="Chameleon LaMP-2 Evaluation System")
     parser.add_argument("--mode", choices=["demo", "full", "ablation"], default="full",
-                       help="Evaluation mode")
+                        help="Evaluation mode")
     parser.add_argument("--config", type=str, help="Configuration file path")
-    parser.add_argument("--data_path", type=str, default="./",
-                       help="Data directory path")
-    
+    parser.add_argument(
+        "--data_path",
+        type=str,
+        default=None,
+        help="Root directory that contains LaMP-2 data (expects raw/LaMP-2/merged.json or answers.json)",
+    )
+    parser.add_argument("--gen", choices=["greedy", "sample"], default="greedy",
+                        help="Generation mode: greedy (do_sample=False) or sample (do_sample=True, temp/top_p used)")
+    parser.add_argument("--alpha", type=float, help="Alpha parameter (personal direction strength)")
+    parser.add_argument("--beta", type=float, help="Beta parameter (neutral direction strength)")
+    parser.add_argument("--layers", type=str, help="Comma-separated layer names (e.g., model.layers.20,model.layers.30)")
+    parser.add_argument("--target_edit_ratio", type=float, default=0.02, help="Target edit ratio for adaptive alpha")
+    parser.add_argument("--edit_ratio_tolerance", type=float, default=0.5, help="Tolerance ratio for target edit ratio (±)")
+    parser.add_argument("--adaptive_alpha", action="store_true", help="Enable adaptive alpha scaling")
+    parser.add_argument("--last_k_tokens", type=int, default=0, help="Apply editing only to last k tokens (0 = all tokens)")
+    parser.add_argument("--max_users", type=int, default=None, help="Maximum number of users for evaluation")
     args = parser.parse_args()
-    
-    evaluator = ChameleonEvaluator(config_path=args.config, data_path=args.data_path)
-    results = evaluator.run_evaluation(mode=args.mode)
-    
+
+    # Parse layers
+    target_layers = None
+    if args.layers:
+        target_layers = [layer.strip() for layer in args.layers.split(',') if layer.strip()]
+
+    evaluator = ChameleonEvaluator(
+        config_path=args.config,
+        data_path=args.data_path or "./",
+        decoding_mode=args.gen
+    )
+    results = evaluator.run_evaluation(
+        mode=args.mode,
+        alpha_override=args.alpha,
+        beta_override=args.beta,
+        layers_override=target_layers,
+        target_edit_ratio=args.target_edit_ratio,
+        edit_ratio_tolerance=args.edit_ratio_tolerance,
+        adaptive_alpha=args.adaptive_alpha,
+        last_k_tokens=args.last_k_tokens,
+        max_users_override=args.max_users
+    )
     print("\n✅ Evaluation completed successfully!")

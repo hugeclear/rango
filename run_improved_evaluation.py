@@ -214,5 +214,6 @@ def main():
     print('\n✨ 改善評価完了!')
     print('='*70)
 
+
 if __name__ == "__main__":
     main()

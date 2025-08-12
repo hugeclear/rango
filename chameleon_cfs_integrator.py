@@ -440,17 +440,16 @@ class CollaborativeChameleonEditor(BaseChameleonEditor):
             else:
                 return output_tensor
             
-            # Direction vectorsを適切な長さに調整
-            personal_vec = torch.tensor(
-                self.direction_personal[:hidden_dim],
-                dtype=output_tensor.dtype,
-                device=output_tensor.device
+            # Use fit_to_hidden to prevent dimension mismatch
+            from dimension_debug_helper import fit_to_hidden
+            
+            personal_vec = fit_to_hidden(
+                self.direction_personal, hidden_dim, output_tensor.device, output_tensor.dtype
             )
-            neutral_vec = torch.tensor(
-                self.direction_neutral[:hidden_dim],
-                dtype=output_tensor.dtype,
-                device=output_tensor.device
+            neutral_vec = fit_to_hidden(
+                self.direction_neutral, hidden_dim, output_tensor.device, output_tensor.dtype
             )
+            
             
             # 編集ベクトル計算
             edit_vector = alpha_personal * personal_vec + alpha_neutral * neutral_vec
