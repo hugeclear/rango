@@ -13,20 +13,25 @@ from collections import Counter
 
 logger = logging.getLogger(__name__)
 
-# Optional dependencies for advanced metrics
-try:
-    from rouge_score import rouge_scorer
-    ROUGE_AVAILABLE = True
-except ImportError:
-    logger.warning("rouge-score not available, ROUGE-L will use fallback implementation")
-    ROUGE_AVAILABLE = False
+# STRICT MODE: Required dependencies, no fallback implementations
+def _check_rouge_dependency():
+    """Check if rouge-score is available"""
+    try:
+        from rouge_score import rouge_scorer
+        return True
+    except ImportError:
+        return False
 
-try:
-    from bert_score import score
-    BERTSCORE_AVAILABLE = True
-except ImportError:
-    logger.warning("bert-score not available, BERTScore will use fallback implementation")
-    BERTSCORE_AVAILABLE = False
+def _check_bertscore_dependency():
+    """Check if bert-score is available"""
+    try:
+        from bert_score import score
+        return True  
+    except ImportError:
+        return False
+
+ROUGE_AVAILABLE = _check_rouge_dependency()
+BERTSCORE_AVAILABLE = _check_bertscore_dependency()
 
 
 def compute_exact_match(references: List[str], predictions: List[str]) -> float:
@@ -124,18 +129,21 @@ def compute_rouge_l(references: List[str], predictions: List[str]) -> Dict[str, 
     """
     Compute ROUGE-L score
     Returns precision, recall, and F1
+    STRICT MODE: Requires rouge-score package, no fallback
     """
     if len(references) != len(predictions):
         raise ValueError("References and predictions must have same length")
     
-    if ROUGE_AVAILABLE:
-        return _compute_rouge_l_official(references, predictions)
-    else:
-        return _compute_rouge_l_fallback(references, predictions)
+    if not ROUGE_AVAILABLE:
+        raise RuntimeError("rouge-score package is required for ROUGE-L computation. "
+                          "Install with: pip install rouge-score")
+    
+    return _compute_rouge_l_official(references, predictions)
 
 
 def _compute_rouge_l_official(references: List[str], predictions: List[str]) -> Dict[str, float]:
     """Official ROUGE-L implementation using rouge-score library"""
+    from rouge_score import rouge_scorer
     scorer = rouge_scorer.RougeScorer(['rougeL'], use_stemmer=True)
     
     precision_scores = []
@@ -157,66 +165,28 @@ def _compute_rouge_l_official(references: List[str], predictions: List[str]) -> 
     }
 
 
-def _compute_rouge_l_fallback(references: List[str], predictions: List[str]) -> Dict[str, float]:
-    """Fallback ROUGE-L implementation using LCS"""
-    precision_scores = []
-    recall_scores = []
-    f1_scores = []
-    
-    for ref, pred in zip(references, predictions):
-        ref_tokens = _normalize_text(ref).split()
-        pred_tokens = _normalize_text(pred).split()
-        
-        if len(ref_tokens) == 0 and len(pred_tokens) == 0:
-            precision_scores.append(1.0)
-            recall_scores.append(1.0)
-            f1_scores.append(1.0)
-            continue
-        
-        if len(ref_tokens) == 0 or len(pred_tokens) == 0:
-            precision_scores.append(0.0)
-            recall_scores.append(0.0)
-            f1_scores.append(0.0)
-            continue
-        
-        lcs_length = _longest_common_subsequence_length(ref_tokens, pred_tokens)
-        
-        precision = lcs_length / len(pred_tokens)
-        recall = lcs_length / len(ref_tokens)
-        
-        if precision + recall == 0:
-            f1 = 0.0
-        else:
-            f1 = 2 * precision * recall / (precision + recall)
-        
-        precision_scores.append(precision)
-        recall_scores.append(recall)
-        f1_scores.append(f1)
-    
-    return {
-        'rouge_l_precision': np.mean(precision_scores),
-        'rouge_l_recall': np.mean(recall_scores),
-        'rouge_l_f1': np.mean(f1_scores)
-    }
+# Fallback implementation removed in strict mode
 
 
 def compute_bertscore(
     references: List[str], 
     predictions: List[str], 
-    model_type: str = "microsoft/deberta-xlarge-mnli",
+    model_type: str = "microsoft/deberta-base-mnli",
     use_fast_tokenizer: bool = True
 ) -> Dict[str, float]:
     """
     Compute BERTScore
     Returns precision, recall, and F1
+    STRICT MODE: Requires bert-score package, no fallback
     """
     if len(references) != len(predictions):
         raise ValueError("References and predictions must have same length")
     
-    if BERTSCORE_AVAILABLE:
-        return _compute_bertscore_official(references, predictions, model_type, use_fast_tokenizer)
-    else:
-        return _compute_bertscore_fallback(references, predictions)
+    if not BERTSCORE_AVAILABLE:
+        raise RuntimeError("bert-score package is required for BERTScore computation. "
+                          "Install with: pip install bert-score")
+    
+    return _compute_bertscore_official(references, predictions, model_type, use_fast_tokenizer)
 
 
 def _compute_bertscore_official(
@@ -225,18 +195,17 @@ def _compute_bertscore_official(
     model_type: str,
     use_fast_tokenizer: bool
 ) -> Dict[str, float]:
-    """Official BERTScore implementation"""
+    """Official BERTScore implementation - STRICT MODE"""
+    from bert_score import score
+    
     try:
-        # Use a lighter model for faster computation
-        if "deberta-xlarge" in model_type:
-            model_type = "microsoft/deberta-base-mnli"  # Use smaller model
-            
+        # Use specified model
         P, R, F1 = score(
             predictions, 
             references, 
             model_type=model_type,
             verbose=False,
-            device='cuda' if hasattr(score, '_device_mapping') else 'cpu'
+            device='cuda'
         )
         
         return {
@@ -245,53 +214,11 @@ def _compute_bertscore_official(
             'bertscore_f1': float(F1.mean())
         }
     except Exception as e:
-        logger.warning(f"BERTScore computation failed: {e}, using fallback")
-        return _compute_bertscore_fallback(references, predictions)
+        logger.error(f"BERTScore computation failed: {e}")
+        raise RuntimeError(f"BERTScore computation failed: {e}. Check model availability and GPU access.")
 
 
-def _compute_bertscore_fallback(references: List[str], predictions: List[str]) -> Dict[str, float]:
-    """Fallback BERTScore implementation using simple token overlap"""
-    logger.info("Using fallback BERTScore implementation (token overlap)")
-    
-    precision_scores = []
-    recall_scores = []
-    f1_scores = []
-    
-    for ref, pred in zip(references, predictions):
-        ref_tokens = set(_normalize_text(ref).split())
-        pred_tokens = set(_normalize_text(pred).split())
-        
-        if len(pred_tokens) == 0 and len(ref_tokens) == 0:
-            precision_scores.append(1.0)
-            recall_scores.append(1.0)
-            f1_scores.append(1.0)
-            continue
-        
-        if len(pred_tokens) == 0 or len(ref_tokens) == 0:
-            precision_scores.append(0.0)
-            recall_scores.append(0.0)
-            f1_scores.append(0.0)
-            continue
-        
-        overlap = len(ref_tokens & pred_tokens)
-        
-        precision = overlap / len(pred_tokens)
-        recall = overlap / len(ref_tokens)
-        
-        if precision + recall == 0:
-            f1 = 0.0
-        else:
-            f1 = 2 * precision * recall / (precision + recall)
-        
-        precision_scores.append(precision)
-        recall_scores.append(recall)
-        f1_scores.append(f1)
-    
-    return {
-        'bertscore_precision': np.mean(precision_scores),
-        'bertscore_recall': np.mean(recall_scores),
-        'bertscore_f1': np.mean(f1_scores)
-    }
+# BERTScore fallback implementation removed in strict mode
 
 
 # Utility functions

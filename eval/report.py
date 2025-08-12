@@ -7,6 +7,7 @@ Creates formatted tables and visualizations
 import pandas as pd
 import numpy as np
 import logging
+import sys
 from typing import Dict, List, Any, Optional
 from pathlib import Path
 import json
@@ -31,6 +32,7 @@ class EvaluationReporter:
     ) -> str:
         """
         Generate a comprehensive markdown report
+        STRICT MODE: Validate input data completeness
         
         Args:
             evaluation_results: Results from evaluation runner
@@ -39,7 +41,28 @@ class EvaluationReporter:
             
         Returns:
             Markdown report content
+            
+        Raises:
+            SystemExit: If evaluation results are incomplete or invalid
         """
+        # Validate evaluation results
+        if not evaluation_results:
+            logger.error("ERROR: no evaluation results found")
+            sys.exit(4)
+        
+        # Check if all conditions have required metrics
+        required_metrics = ['exact_match', 'f1_score', 'bleu_score']
+        for condition, result in evaluation_results.items():
+            if 'metrics' not in result:
+                logger.error(f"ERROR: no metrics found for condition '{condition}'")
+                sys.exit(4)
+                
+            metrics = result['metrics']
+            missing_metrics = [m for m in required_metrics if m not in metrics]
+            if missing_metrics:
+                logger.error(f"ERROR: condition '{condition}' missing required metrics: {missing_metrics}")
+                sys.exit(4)
+        
         report_sections = []
         
         # Header
