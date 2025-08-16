@@ -1,0 +1,32 @@
+# TASK
+You will classify the question into exactly one tag.
+
+# INPUT
+Question: {QUESTION}
+User Profile: {USER_PROFILE}
+
+# CONSTRAINTS
+Allowed Tags: {ALLOWED_TAGS_COMMA_SEPARATED}
+
+# OUTPUT FORMAT (STRICT)
+Answer: <TAG>
+
+# CRITICAL INSTRUCTIONS
+- You MUST start your response with "Answer: "
+- Follow "Answer: " with exactly one tag from the allowed list
+- Do NOT add periods, explanations, or any text after the tag
+- Do NOT write anything before "Answer: "
+- The tag must match the allowed list EXACTLY (case-sensitive)
+- 絶対に次の形式のみで返答してください: `Answer: <label>`。前後に一切の説明文を付けないこと。
+
+# EXAMPLES OF CORRECT OUTPUT
+Answer: classic
+Answer: sci-fi
+Answer: comedy
+
+# YOUR COMPLETE RESPONSE MUST BE IN THIS FORMAT
+Answer: <TAG>
+
+Where <TAG> is one of: {ALLOWED_TAGS_COMMA_SEPARATED}
+
+GENERATE YOUR RESPONSE NOW:
