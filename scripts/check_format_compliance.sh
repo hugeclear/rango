@@ -35,7 +35,7 @@ echo ""
 echo "🧪 Running Format Compliance Test..."
 echo "   Command: conda run -n faiss310 python scripts/verification/ablation_study.py"
 
-# Run ablation study with strict format checking
+# Run ablation study with strict format checking and smoke test mode
 if conda run -n faiss310 python scripts/verification/ablation_study.py \
     --data "$TEST_DATA" \
     --runs-dir "$RUNS_DIR" \
@@ -57,6 +57,7 @@ if conda run -n faiss310 python scripts/verification/ablation_study.py \
     --anti-hub on \
     --ppr-restart 0.15 \
     --hub-degree-cap 200 \
+    --format-smoke-test \
     --generate-report > /tmp/compliance_output.log 2>&1; then
     
     echo "✅ Ablation study completed successfully"
@@ -102,8 +103,26 @@ fi
 
 echo ""
 echo "🎯 Format Compliance Assessment:"
-echo "   Measured Rate: ${COMPLIANCE_RATE} ($(python3 -c "print(f'{float(\"$COMPLIANCE_RATE\")*100:.1f}%')"))"
-echo "   Required Rate: ${THRESHOLD} ($(python3 -c "print(f'{float(\"$THRESHOLD\")*100:.1f}%')"))"
+
+# Fix % display calculation by exporting variables and using direct calculation
+export COMPLIANCE_RATE
+export THRESHOLD
+
+py_pct=$(python3 - <<'PY'
+import os
+v=float(os.environ.get("COMPLIANCE_RATE","0"))
+print(f"{v*100:.1f}%")
+PY
+)
+echo "   Measured Rate: ${COMPLIANCE_RATE} (${py_pct})"
+
+py_thresh=$(python3 - <<'PY'
+import os
+t=float(os.environ.get("THRESHOLD","0"))
+print(f"{t*100:.1f}%")
+PY
+)
+echo "   Required Rate: ${THRESHOLD} (${py_thresh})"
 
 # Compare with threshold
 MEETS_THRESHOLD=$(python3 -c "

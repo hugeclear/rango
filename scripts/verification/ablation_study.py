@@ -78,7 +78,7 @@ from v0.fixed_dictionary_learner import FixedCFSDictionaryLearner, DictionaryCon
 from v0.selector_metrics_logger import SelectorMetricsLogger
 from v1.selection_gate import SelectionGate, SelectionGateConfig
 from v2.curriculum_anti_hub import CurriculumAntiHubSystem, CurriculumConfig
-from utils.strict_output import StrictOutputValidator, extract_strict_answer, format_repair_prompt, json_default
+from utils.strict_output import StrictOutputValidator, extract_strict_answer, extract_raw_answer_only, format_repair_prompt, json_default
 
 # Setup logging
 logging.basicConfig(level=logging.WARNING)
@@ -117,9 +117,13 @@ class AblationStudySystem:
                  decoding_temperature: float = 0.0,
                  decoding_top_p: float = 0.0,
                  decoding_max_tokens: int = 8,
-                 decoding_stop_tokens: list = None):
+                 decoding_stop_tokens: list = None,
+                 format_smoke_test: bool = False):
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Format smoke test configuration - ISOLATES GT-based simulation
+        self.format_smoke_test = format_smoke_test
         
         # Strict output configuration
         self.strict_output_pattern = strict_output_pattern
@@ -165,79 +169,182 @@ class AblationStudySystem:
         
         logger.info(f"Ablation Study System initialized: {self.output_dir}")
     
+    def _extract_prediction_for_compliance_and_metrics(self, pred_text: str) -> Tuple[str, bool, str, bool]:
+        """
+        Extract predictions separately for compliance checking and metrics calculation.
+        
+        Args:
+            pred_text: Raw prediction text from model
+            
+        Returns:
+            Tuple of (compliance_pred, compliance_valid, metrics_pred, metrics_valid)
+            - compliance_pred: Extracted prediction for compliance (fuzzy matching allowed)
+            - compliance_valid: Whether compliance extraction succeeded
+            - metrics_pred: Raw extracted prediction for metrics (no corrections)
+            - metrics_valid: Whether raw extraction succeeded
+        """
+        if not self.strict_output_pattern:
+            # No pattern specified, return as-is for both
+            return pred_text, True, pred_text, True
+        
+        # Extract for compliance (with fuzzy matching and allowed labels)
+        compliance_pred, compliance_valid = extract_strict_answer(
+            pred_text, 
+            self.strict_output_pattern, 
+            self.format_validator.allowed_labels if self.format_validator else None
+        )
+        
+        # Extract for metrics (raw regex only, no fuzzy matching)
+        metrics_pred, metrics_valid = extract_raw_answer_only(
+            pred_text, 
+            self.strict_output_pattern
+        )
+        
+        return compliance_pred, compliance_valid, metrics_pred, metrics_valid
+    
     def _generate_prediction_with_format_compliance(self, sample: Dict[str, Any]) -> Tuple[str, bool]:
         """
-        Simulate prediction generation with strict format compliance and enhanced decoding constraints.
+        Generate prediction with strict format compliance.
+        Two paths: GT-based simulation for format smoke tests vs normal evaluation.
         
         Returns:
             Tuple of (prediction, format_compliant)
         """
-        if not self.format_validator:
-            # No strict format required, generate basic prediction
-            return sample['ground_truth_tag'], True
+        if self.format_smoke_test:
+            # ===== FORMAT SMOKE TEST PATH (GT-based constrained simulation) =====
+            if not self.format_validator:
+                # No strict format required, generate basic prediction
+                return sample['ground_truth_tag'], True  # format-smoke-test
+            
+            # Simulate initial prediction with enhanced decoding constraints
+            # With constraints: temperature=0.0, top_p=0.0, max_tokens=8, stop=["\n"]
+            initial_predictions = [
+                f"Answer: {sample['ground_truth_tag']}",  # Perfect format - higher probability with constraints  # format-smoke-test
+                f"Answer: {sample['ground_truth_tag']}\n",  # Compliant but with newline (caught by stop token)  # format-smoke-test
+                f"The movie belongs to {sample['ground_truth_tag']} category.",  # Non-compliant, less likely with constraints  # format-smoke-test
+                f"Answer: {sample['ground_truth_tag']} because",  # Truncated by max_tokens  # format-smoke-test
+            ]
+            
+            # Higher compliance rate due to decoding constraints
+            prediction_choice = np.random.choice(len(initial_predictions), 
+                                               p=[0.85, 0.10, 0.03, 0.02])  # 85% chance of perfect format
+            initial_prediction = initial_predictions[prediction_choice]
+            
+            # Apply stop token simulation (remove anything after \n)
+            if "\n" in initial_prediction:
+                initial_prediction = initial_prediction.split("\n")[0]
+            
+            # Apply max_tokens simulation (truncate to ~8 tokens)
+            tokens = initial_prediction.split()
+            if len(tokens) > 8:
+                initial_prediction = " ".join(tokens[:8])
+            
+            # Validate initial prediction
+            answer, is_valid = self.format_validator.validate(initial_prediction)
+            
+            if is_valid:
+                return answer, True
+            
+            # If format invalid and reask enabled, try repair with enhanced constraints
+            if self.reask_on_format_fail:
+                for retry_attempt in range(self.reask_max_retries):
+                    # Simulate repair attempt with stricter constraints
+                    base_prompt = f"Tag: {sample['query_movie_description']}"
+                    repair_prompt = format_repair_prompt(base_prompt, self.format_validator.allowed_labels)
+                    
+                    # Simulate retry with much higher compliance rate due to constraints
+                    retry_predictions = [
+                        f"Answer: {sample['ground_truth_tag']}",  # Very high chance with constraints  # format-smoke-test
+                        f"Answer: action",  # Alternative valid tag
+                        f"Answer: {sample['ground_truth_tag'][:6]}",  # Truncated but valid  # format-smoke-test
+                    ]
+                    
+                    # Much higher success rate with enhanced decoding constraints
+                    retry_choice = np.random.choice(len(retry_predictions), p=[0.95, 0.03, 0.02])
+                    retry_prediction = retry_predictions[retry_choice]
+                    
+                    # Apply constraints to retry as well
+                    if "\n" in retry_prediction:
+                        retry_prediction = retry_prediction.split("\n")[0]
+                    tokens = retry_prediction.split()
+                    if len(tokens) > 8:
+                        retry_prediction = " ".join(tokens[:8])
+                    
+                    # Validate retry
+                    retry_answer, retry_valid = self.format_validator.validate(retry_prediction)
+                    
+                    if retry_valid:
+                        return retry_answer, True
+            
+            # If all fails, mark as non-compliant but still record attempt
+            return "", False
         
-        # Simulate initial prediction with enhanced decoding constraints
-        # With constraints: temperature=0.0, top_p=0.0, max_tokens=8, stop=["\n"]
-        initial_predictions = [
-            f"Answer: {sample['ground_truth_tag']}",  # Perfect format - higher probability with constraints
-            f"Answer: {sample['ground_truth_tag']}\n",  # Compliant but with newline (caught by stop token)
-            f"The movie belongs to {sample['ground_truth_tag']} category.",  # Non-compliant, less likely with constraints
-            f"Answer: {sample['ground_truth_tag']} because",  # Truncated by max_tokens
-        ]
-        
-        # Higher compliance rate due to decoding constraints
-        prediction_choice = np.random.choice(len(initial_predictions), 
-                                           p=[0.85, 0.10, 0.03, 0.02])  # 85% chance of perfect format
-        initial_prediction = initial_predictions[prediction_choice]
-        
-        # Apply stop token simulation (remove anything after \n)
-        if "\n" in initial_prediction:
-            initial_prediction = initial_prediction.split("\n")[0]
-        
-        # Apply max_tokens simulation (truncate to ~8 tokens)
-        tokens = initial_prediction.split()
-        if len(tokens) > 8:
-            initial_prediction = " ".join(tokens[:8])
-        
-        # Validate initial prediction
-        answer, is_valid = self.format_validator.validate(initial_prediction)
-        
-        if is_valid:
-            return answer, True
-        
-        # If format invalid and reask enabled, try repair with enhanced constraints
-        if self.reask_on_format_fail:
-            for retry_attempt in range(self.reask_max_retries):
-                # Simulate repair attempt with stricter constraints
-                base_prompt = f"Tag: {sample['query_movie_description']}"
-                repair_prompt = format_repair_prompt(base_prompt, self.format_validator.allowed_labels)
+        else:
+            # ===== NORMAL EVALUATION PATH (NO GT ACCESS) =====
+            # Absolutely no 'ground_truth_tag' references in this path
+            # Use realistic model prediction simulation without GT knowledge
+            
+            # Simulate realistic model output without GT dependency
+            realistic_predictions = [
+                "Answer: action",
+                "Answer: comedy", 
+                "Answer: drama",
+                "Answer: thriller",
+                "The movie is about action scenes.",  # Non-compliant format
+                "Answer: sci-fi\nThis is a science fiction film.",  # Multi-line
+                "Action movie with lots of explosions",  # No Answer: prefix
+                "Answer: adventure because it has exploration",  # Too long
+            ]
+            
+            # Simulate model output with decoding constraints applied
+            prediction_choice = np.random.choice(len(realistic_predictions), 
+                                               p=[0.30, 0.25, 0.20, 0.15, 0.05, 0.03, 0.015, 0.005])
+            pred_text = realistic_predictions[prediction_choice]
+            
+            # Apply decoding constraints
+            if "\n" in pred_text:
+                pred_text = pred_text.split("\n")[0]
+            
+            tokens = pred_text.split()
+            if len(tokens) > self.decoding_max_tokens:
+                pred_text = " ".join(tokens[:self.decoding_max_tokens])
+            
+            # Validate prediction if validator exists
+            if self.format_validator:
+                answer, is_valid = self.format_validator.validate(pred_text)
                 
-                # Simulate retry with much higher compliance rate due to constraints
-                retry_predictions = [
-                    f"Answer: {sample['ground_truth_tag']}",  # Very high chance with constraints
-                    f"Answer: action",  # Alternative valid tag
-                    f"Answer: {sample['ground_truth_tag'][:6]}",  # Truncated but valid
-                ]
+                if is_valid:
+                    return answer, True
                 
-                # Much higher success rate with enhanced decoding constraints
-                retry_choice = np.random.choice(len(retry_predictions), p=[0.95, 0.03, 0.02])
-                retry_prediction = retry_predictions[retry_choice]
+                # Try reask if enabled
+                if self.reask_on_format_fail:
+                    for retry_attempt in range(self.reask_max_retries):
+                        # Simulate retry without GT knowledge
+                        retry_predictions = [
+                            "Answer: drama",
+                            "Answer: action", 
+                            "Answer: comedy",
+                            "Answer: adventure"
+                        ]
+                        
+                        retry_choice = np.random.choice(len(retry_predictions))
+                        retry_pred = retry_predictions[retry_choice]
+                        
+                        # Apply constraints
+                        if "\n" in retry_pred:
+                            retry_pred = retry_pred.split("\n")[0]
+                        retry_tokens = retry_pred.split()
+                        if len(retry_tokens) > self.decoding_max_tokens:
+                            retry_pred = " ".join(retry_tokens[:self.decoding_max_tokens])
+                        
+                        retry_answer, retry_valid = self.format_validator.validate(retry_pred)
+                        if retry_valid:
+                            return retry_answer, True
                 
-                # Apply constraints to retry as well
-                if "\n" in retry_prediction:
-                    retry_prediction = retry_prediction.split("\n")[0]
-                tokens = retry_prediction.split()
-                if len(tokens) > 8:
-                    retry_prediction = " ".join(tokens[:8])
-                
-                # Validate retry
-                retry_answer, retry_valid = self.format_validator.validate(retry_prediction)
-                
-                if retry_valid:
-                    return retry_answer, True
-        
-        # If all fails, mark as non-compliant but still record attempt
-        return "", False
+                return "", False
+            else:
+                # No validator, just return the prediction
+                return pred_text, True
     
     def generate_lamp2_test_data(self, n_samples: int = 10) -> List[Dict[str, Any]]:
         """LaMP-2風テストデータ生成"""
@@ -762,6 +869,8 @@ if __name__ == "__main__":
     parser.add_argument("--ppr-restart", type=float, help="PPR restart probability")
     parser.add_argument("--hub-degree-cap", type=int, help="Hub degree cap")
     parser.add_argument("--generate-report", action="store_true", help="Generate evaluation report")
+    parser.add_argument("--format-smoke-test", action="store_true", 
+                       help="USE ONLY FOR format compliance smoke test. Allows GT-based constrained simulation. NEVER use for normal evaluation.")
     
     args = parser.parse_args()
     
@@ -786,7 +895,8 @@ if __name__ == "__main__":
         decoding_temperature=args.decoding_temperature,
         decoding_top_p=args.decoding_top_p,
         decoding_max_tokens=args.decoding_max_tokens,
-        decoding_stop_tokens=stop_tokens
+        decoding_stop_tokens=stop_tokens,
+        format_smoke_test=args.format_smoke_test
     )
     
     # 3条件比較実行

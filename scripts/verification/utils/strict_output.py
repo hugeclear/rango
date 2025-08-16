@@ -71,9 +71,34 @@ def fuzzy_match_label(label: str, allowed_labels: List[str], max_distance: int =
     return None
 
 
+def extract_raw_answer_only(text: str, pattern: str) -> Tuple[str, bool]:
+    """
+    Extract answer using raw regex matching only - NO fuzzy matching or corrections.
+    Use this for metrics (accuracy/quality) to ensure unbiased evaluation.
+    
+    Args:
+        text: Input text to search
+        pattern: Regex pattern with one capture group for the answer
+        
+    Returns:
+        Tuple of (extracted_answer, success_flag)
+        - If exact regex match found: (answer, True)
+        - If no match: ("", False)
+    """
+    try:
+        regex = re.compile(pattern, re.MULTILINE)
+        match = regex.search(text)
+        if not match:
+            return ("", False)
+        return (match.group(1).strip(), True)
+    except Exception:
+        return ("", False)
+
+
 def extract_strict_answer(text: str, pattern: str, allowed: Optional[List[str]] = None) -> Tuple[str, bool]:
     """
     Extract answer from text using regex pattern with enhanced postprocessing.
+    Use this for format compliance checking (allows fuzzy matching).
     
     Args:
         text: Input text to search
