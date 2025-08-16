@@ -187,11 +187,12 @@ class AblationStudySystem:
             # No pattern specified, return as-is for both
             return pred_text, True, pred_text, True
         
-        # Extract for compliance (with fuzzy matching and allowed labels)
+        # Extract for compliance (strict matching only - no fuzzy for production compliance)
         compliance_pred, compliance_valid = extract_strict_answer(
             pred_text, 
             self.strict_output_pattern, 
-            self.format_validator.allowed_labels if self.format_validator else None
+            self.format_validator.allowed_labels if self.format_validator else None,
+            allow_fuzzy=False  # Strict compliance checking
         )
         
         # Extract for metrics (raw regex only, no fuzzy matching)
@@ -256,7 +257,7 @@ class AblationStudySystem:
                     retry_predictions = [
                         f"Answer: {sample['ground_truth_tag']}",  # Very high chance with constraints  # format-smoke-test
                         f"Answer: action",  # Alternative valid tag
-                        f"Answer: {sample['ground_truth_tag'][:6]}",  # Truncated but valid  # format-smoke-test
+                        f"Answer: comedy",  # Another alternative valid tag
                     ]
                     
                     # Much higher success rate with enhanced decoding constraints
@@ -284,12 +285,20 @@ class AblationStudySystem:
             # Absolutely no 'ground_truth_tag' references in this path
             # Use realistic model prediction simulation without GT knowledge
             
+            # Generate predictions using only allowed labels (no GT dependency)
+            if self.format_validator and self.format_validator.allowed_labels:
+                allowed_labels = self.format_validator.allowed_labels
+            else:
+                # Fallback to default movie tags
+                allowed_labels = ['action', 'comedy', 'drama', 'thriller', 'adventure', 
+                                'romance', 'sci-fi', 'horror', 'mystery', 'crime']
+            
             # Simulate realistic model output without GT dependency
             realistic_predictions = [
-                "Answer: action",
-                "Answer: comedy", 
-                "Answer: drama",
-                "Answer: thriller",
+                f"Answer: {np.random.choice(allowed_labels)}",  # Compliant format
+                f"Answer: {np.random.choice(allowed_labels)}",  # Another compliant
+                f"Answer: {np.random.choice(allowed_labels)}",  # Third compliant  
+                f"Answer: {np.random.choice(allowed_labels)}",  # Fourth compliant
                 "The movie is about action scenes.",  # Non-compliant format
                 "Answer: sci-fi\nThis is a science fiction film.",  # Multi-line
                 "Action movie with lots of explosions",  # No Answer: prefix
@@ -319,12 +328,12 @@ class AblationStudySystem:
                 # Try reask if enabled
                 if self.reask_on_format_fail:
                     for retry_attempt in range(self.reask_max_retries):
-                        # Simulate retry without GT knowledge
+                        # Simulate retry without GT knowledge using allowed labels
                         retry_predictions = [
-                            "Answer: drama",
-                            "Answer: action", 
-                            "Answer: comedy",
-                            "Answer: adventure"
+                            f"Answer: {np.random.choice(allowed_labels)}",
+                            f"Answer: {np.random.choice(allowed_labels)}", 
+                            f"Answer: {np.random.choice(allowed_labels)}",
+                            f"Answer: {np.random.choice(allowed_labels)}"
                         ]
                         
                         retry_choice = np.random.choice(len(retry_predictions))

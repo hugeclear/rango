@@ -95,15 +95,16 @@ def extract_raw_answer_only(text: str, pattern: str) -> Tuple[str, bool]:
         return ("", False)
 
 
-def extract_strict_answer(text: str, pattern: str, allowed: Optional[List[str]] = None) -> Tuple[str, bool]:
+def extract_strict_answer(text: str, pattern: str, allowed: Optional[List[str]] = None, allow_fuzzy: bool = False) -> Tuple[str, bool]:
     """
-    Extract answer from text using regex pattern with enhanced postprocessing.
-    Use this for format compliance checking (allows fuzzy matching).
+    Extract answer from text using regex pattern with optional fuzzy matching.
+    Use this for format compliance checking (strict by default).
     
     Args:
         text: Input text to search
         pattern: Regex pattern with one capture group for the answer
         allowed: Optional list of allowed labels for validation
+        allow_fuzzy: Whether to allow fuzzy matching (default: False for strict compliance)
         
     Returns:
         Tuple of (extracted_answer, success_flag)
@@ -127,18 +128,19 @@ def extract_strict_answer(text: str, pattern: str, allowed: Optional[List[str]] 
         # Extract first capture group
         answer = match.group(1).strip()
         
-        # Enhanced validation with fuzzy matching
+        # Strict validation with optional fuzzy matching
         if allowed is not None:
             # First try exact match
             if answer in allowed:
                 return (answer, True)
             
-            # Try fuzzy matching (case-insensitive + distance ≤ 1)
-            fuzzy_match = fuzzy_match_label(answer, allowed, max_distance=1)
-            if fuzzy_match:
-                return (fuzzy_match, True)
+            # Try fuzzy matching only if explicitly allowed
+            if allow_fuzzy:
+                fuzzy_match = fuzzy_match_label(answer, allowed, max_distance=1)
+                if fuzzy_match:
+                    return (fuzzy_match, True)
             
-            # No valid match found
+            # No valid match found (strict mode or fuzzy failed)
             return ("", False)
                 
         return (answer, True)
