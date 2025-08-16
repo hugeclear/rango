@@ -21,7 +21,7 @@ import time
 import json
 
 # --- Robust curriculum spec parsing & clamping ---
-HARD_CAP = 0.20  # 20% upper bound for hard negatives
+HARD_CAP = 0.20  # 20% upper bound for hard negatives (high similarity = difficult to distinguish)
 
 def _parse_curriculum_spec(spec: str):
     """Parse curriculum spec like 'easy:2,medium:2,hard:1' into normalized weights.
@@ -77,9 +77,9 @@ class CurriculumConfig:
     stability_requirement: int = 3         # 安定性要求（連続成功回数）
     
     # 負例生成設定
-    easy_similarity_range: Tuple[float, float] = (0.6, 0.8)    # Easy負例類似度範囲
+    easy_similarity_range: Tuple[float, float] = (0.0, 0.3)    # Easy負例類似度範囲（低類似=区別容易）
     medium_similarity_range: Tuple[float, float] = (0.3, 0.6)  # Medium負例類似度範囲
-    hard_similarity_range: Tuple[float, float] = (0.0, 0.3)    # Hard負例類似度範囲
+    hard_similarity_range: Tuple[float, float] = (0.6, 0.8)    # Hard負例類似度範囲（高類似=区別困難）
     
     # アンチハブ設定
     hub_threshold: float = 2.0             # ハブ判定閾値（標準偏差）
@@ -268,7 +268,7 @@ class CurriculumAntiHubSystem:
         # 3) もし不足がある場合は、最も候補が多かった難易度から補充（簡易フォールバック）
         if len(selected_negatives) < n_negatives:
             need = n_negatives - len(selected_negatives)
-            # 再度 easy→medium→hard の順で緩く補完（安全側）
+            # 再度 easy→medium→hard の順で緩く補完（安全側：低類似度から）
             for diff in ('easy', 'medium', 'hard'):
                 if need <= 0:
                     break
@@ -398,7 +398,9 @@ class CurriculumAntiHubSystem:
         return selected_negatives
     
     def _get_current_difficulty_level(self) -> str:
-        """現在の難易度レベル取得"""
+        """現在の難易度レベル取得
+        カリキュラム学習: easy(低類似=区別容易) → medium → hard(高類似=区別困難)
+        """
         stage_to_difficulty = {0: 'easy', 1: 'medium', 2: 'hard'}
         return stage_to_difficulty.get(self.state.current_stage, 'easy')
     
