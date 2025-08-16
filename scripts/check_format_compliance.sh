@@ -104,25 +104,29 @@ fi
 echo ""
 echo "🎯 Format Compliance Assessment:"
 
-# Fix % display calculation by exporting variables and using direct calculation
+# Fix % display calculation by exporting variables and using safe conversion
 export COMPLIANCE_RATE
 export THRESHOLD
 
-py_pct=$(python3 - <<'PY'
+# Measured（0〜1 でも 0〜100 でもOKにする）
+MEASURED_PCT=$(python3 - <<'PY'
 import os
-v=float(os.environ.get("COMPLIANCE_RATE","0"))
+v = float(os.environ.get("COMPLIANCE_RATE","0").strip() or 0.0)
+if v > 1.0: v = v/100.0
 print(f"{v*100:.1f}%")
 PY
 )
-echo "   Measured Rate: ${COMPLIANCE_RATE} (${py_pct})"
+echo "   Measured Rate: ${COMPLIANCE_RATE} (${MEASURED_PCT})"
 
-py_thresh=$(python3 - <<'PY'
+# Threshold 側も同様の安全版（既にOKならそのままで可）
+THRESHOLD_PCT=$(python3 - <<'PY'
 import os
-t=float(os.environ.get("THRESHOLD","0"))
+t = float(os.environ.get("THRESHOLD","0").strip() or 0.0)
+if t > 1.0: t = t/100.0
 print(f"{t*100:.1f}%")
 PY
 )
-echo "   Required Rate: ${THRESHOLD} (${py_thresh})"
+echo "   Required Rate: ${THRESHOLD} (${THRESHOLD_PCT})"
 
 # Compare with threshold
 MEETS_THRESHOLD=$(python3 -c "
