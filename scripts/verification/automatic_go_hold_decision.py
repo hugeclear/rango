@@ -109,11 +109,13 @@ class AutomaticGoHoldDecisionSystem:
     def _collect_v0_results(self) -> Dict[str, Any]:
         """V0結果収集"""
         try:
-            # V0テスト結果検索
-            v0_files = list(self.results_dir.glob("**/v0**/selector_summary_*.json"))
+            # Robust search: gather all selector summaries, prefer those under a directory starting with 'v0'
+            candidates = list(self.results_dir.rglob("selector_summary_*.json"))
+            v0_candidates = [p for p in candidates if any(seg.startswith("v0") for seg in p.parts)]
+            v0_files = sorted(v0_candidates or candidates, key=lambda p: p.stat().st_mtime)
             
             if v0_files:
-                with open(v0_files[-1], 'r') as f:
+                with v0_files[-1].open('r', encoding='utf-8') as f:
                     v0_data = json.load(f)
                 
                 # V0合格基準チェック

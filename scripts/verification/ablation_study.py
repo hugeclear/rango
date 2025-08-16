@@ -21,9 +21,41 @@ import json
 from pathlib import Path
 import numpy as np
 from typing import Dict, List, Any, Tuple
+
 import logging
 from dataclasses import dataclass
 from collections import defaultdict
+
+# --- JSON serialization safety helpers ---
+def _to_builtin(o):
+    """Recursively convert numpy scalars/bools and containers to JSON-safe Python types."""
+    try:
+        import numpy as np
+    except Exception:
+        np = None
+
+    # numpy scalar types (including bool_)
+    if np is not None and isinstance(o, np.generic):
+        return o.item()
+
+    # primitives
+    if isinstance(o, (str, int, float, bool)) or o is None:
+        return o
+
+    # dict
+    if isinstance(o, dict):
+        return {str(k): _to_builtin(v) for k, v in o.items()}
+
+    # list/tuple/set
+    if isinstance(o, (list, tuple, set)):
+        return [_to_builtin(v) for v in o]
+
+    # dataclass or objects with __dict__
+    if hasattr(o, "__dict__"):
+        return _to_builtin(vars(o))
+
+    # fallback to string
+    return str(o)
 
 # Add paths for imports
 sys.path.append(str(Path(__file__).parent / "v0"))
@@ -551,26 +583,14 @@ class AblationStudySystem:
             'recommendations': report.recommendations,
             'go_hold_decision': report.go_hold_decision
         }
-        
+
         # JSON serializable形式に変換
-        def convert_for_json(obj):
-            if isinstance(obj, np.ndarray):
-                return obj.tolist()
-            elif isinstance(obj, (np.integer, np.floating)):
-                return obj.item()
-            elif isinstance(obj, dict):
-                return {k: convert_for_json(v) for k, v in obj.items()}
-            elif isinstance(obj, list):
-                return [convert_for_json(item) for item in obj]
-            else:
-                return obj
-        
-        serializable_data = convert_for_json(report_data)
-        
+        serializable_data = _to_builtin(report_data)
+
         report_file = self.output_dir / "ablation_study_report.json"
         with open(report_file, 'w', encoding='utf-8') as f:
             json.dump(serializable_data, f, indent=2, ensure_ascii=False)
-        
+
         logger.info(f"Ablation study report saved: {report_file}")
 
 # メイン実行

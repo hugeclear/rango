@@ -384,8 +384,10 @@ class CompleteVerificationSystem:
         def make_serializable(obj):
             if isinstance(obj, np.ndarray):
                 return obj.tolist()
-            elif isinstance(obj, (np.integer, np.floating)):
+            elif isinstance(obj, (np.integer, np.floating, np.bool_)):
                 return obj.item()
+            elif isinstance(obj, bool):
+                return obj
             elif hasattr(obj, '__dict__'):
                 return {k: make_serializable(v) for k, v in obj.__dict__.items()}
             elif isinstance(obj, dict):
