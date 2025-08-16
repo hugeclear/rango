@@ -27,6 +27,16 @@ from dataclasses import dataclass
 from collections import defaultdict
 
 # --- JSON serialization safety helpers ---
+def _json_default(o):
+    """Convert numpy types to JSON-serializable Python types."""
+    if isinstance(o, (np.bool_,)): 
+        return bool(o)
+    if isinstance(o, (np.integer,)): 
+        return int(o)
+    if isinstance(o, (np.floating,)): 
+        return float(o)
+    return str(o)
+
 def _to_builtin(o):
     """Recursively convert numpy scalars/bools and containers to JSON-safe Python types."""
     try:
@@ -589,7 +599,7 @@ class AblationStudySystem:
 
         report_file = self.output_dir / "ablation_study_report.json"
         with open(report_file, 'w', encoding='utf-8') as f:
-            json.dump(serializable_data, f, indent=2, ensure_ascii=False)
+            json.dump(serializable_data, f, indent=2, ensure_ascii=False, default=_json_default)
 
         logger.info(f"Ablation study report saved: {report_file}")
 

@@ -12,7 +12,7 @@ V2: Curriculum Negatives + Anti-Hub Sampling
 
 import numpy as np
 import networkx as nx
-from typing import Dict, List, Tuple, Any, Optional
+from typing import Dict, List, Tuple, Any, Optional, Literal
 from pathlib import Path
 from dataclasses import dataclass, asdict
 from collections import defaultdict
@@ -76,7 +76,10 @@ class CurriculumConfig:
     progression_threshold: float = 0.8     # 段階進行閾値
     stability_requirement: int = 3         # 安定性要求（連続成功回数）
     
-    # 負例生成設定
+    # 難易度モード設定
+    difficulty_mode: Literal['standard', 'inverse'] = 'standard'  # 標準=一般的ML定義
+    
+    # 負例生成設定（標準モード：hard=高類似、easy=低類似）
     easy_similarity_range: Tuple[float, float] = (0.0, 0.3)    # Easy負例類似度範囲（低類似=区別容易）
     medium_similarity_range: Tuple[float, float] = (0.3, 0.6)  # Medium負例類似度範囲
     hard_similarity_range: Tuple[float, float] = (0.6, 0.8)    # Hard負例類似度範囲（高類似=区別困難）
@@ -387,8 +390,8 @@ class CurriculumAntiHubSystem:
         total_gen = sum(per_diff_counts.values()) or 1
         observed_hard_ratio = per_diff_counts['hard'] / total_gen
         if observed_hard_ratio > HARD_CAP + 1e-6:
-            logger.warning("[curriculum] Hard negative ratio too high after allocation: %.2f > %.2f",
-                           observed_hard_ratio, HARD_CAP)
+            logger.debug("[curriculum] Hard negative ratio too high after allocation: %.2f > %.2f",
+                         observed_hard_ratio, HARD_CAP)
 
         logger.debug(
             "Generated %d negatives (easy=%d, medium=%d, hard=%d) in %.3fs",
@@ -451,14 +454,21 @@ class CurriculumAntiHubSystem:
     
     def _get_similarity_range(self, difficulty: str) -> Tuple[float, float]:
         """難易度別類似度範囲取得"""
-        if difficulty == 'easy':
-            return self.config.easy_similarity_range
-        elif difficulty == 'medium':
-            return self.config.medium_similarity_range
-        elif difficulty == 'hard':
-            return self.config.hard_similarity_range
+        if self.config.difficulty_mode == 'standard':
+            # 標準モード（推奨）: easy=低類似, hard=高類似
+            table = {
+                'easy': self.config.easy_similarity_range,
+                'medium': self.config.medium_similarity_range,
+                'hard': self.config.hard_similarity_range
+            }
         else:
-            return (0.0, 1.0)
+            # 逆モード（互換性用）: easy=高類似, hard=低類似
+            table = {
+                'easy': (0.6, 0.8),
+                'medium': (0.3, 0.6),
+                'hard': (0.0, 0.3),
+            }
+        return table.get(difficulty, (0.0, 1.0))
     
     def _compute_cosine_similarity(self, vec1: np.ndarray, vec2: np.ndarray) -> float:
         """コサイン類似度計算"""
