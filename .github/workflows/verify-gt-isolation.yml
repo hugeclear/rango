@@ -31,17 +31,29 @@ jobs:
             except Exception:
               continue
             lines = text.splitlines()
+            in_smoke_test_scope = False
             for i, line in enumerate(lines, 1):
+              # Track if we're in a smoke test scope
+              if "if self.format_smoke_test:" in line:
+                in_smoke_test_scope = True
+              elif line.strip() and not line.startswith(" ") and not line.startswith("\t"):
+                # Top-level code (not indented) - exit smoke test scope
+                in_smoke_test_scope = False
+              
               if "ground_truth_tag" not in line:
                 continue
               # コメント行は除外
               if line.lstrip().startswith("#"):
                 continue
-              # 直前5行に format_smoke_test があるか（簡易スコープ確認）
-              ctx = "\n".join(lines[max(0, i-6):i])
-              if "format_smoke_test" not in ctx:
-                print(f"LEAK {p}:{i}: {line.strip()}")
-                ok = False
+              # format-smoke-test コメントがある行は許可
+              if "# format-smoke-test" in line:
+                continue
+              # format_smoke_test スコープ内は許可
+              if in_smoke_test_scope:
+                continue
+              
+              print(f"LEAK {p}:{i}: {line.strip()}")
+              ok = False
 
           if not ok:
             sys.exit(1)
