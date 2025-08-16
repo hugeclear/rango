@@ -6,13 +6,13 @@ Integrates all components: diversity, new metrics, significance testing
 STRICT MODE: No mock data, no fallback implementations, explicit errors for missing dependencies
 """
 
-import os
 import sys
 import argparse
 import json
 import yaml
 import logging
 import time
+import shutil
 from pathlib import Path
 from typing import Dict, List, Any, Optional
 
@@ -23,6 +23,8 @@ sys.path.insert(0, str(project_root))
 from eval.runner import GraphRAGChameleonEvaluator
 from eval.significance import compare_all_conditions
 from eval.report import EvaluationReporter
+from data.discovery import discover_eval_dataset, DatasetNotFound
+from data.loader import load_dataset, DataLoadError, get_format_from_path
 
 # Configure logging
 logging.basicConfig(
@@ -85,13 +87,14 @@ def check_dependencies(config: Dict[str, Any]) -> None:
         sys.exit(EXIT_DEPENDENCY_ERROR)
 
 
-def load_test_data(data_path: str) -> List[Dict[str, Any]]:
+def load_test_data(data_path: str, format_hint: Optional[str] = None) -> List[Dict[str, Any]]:
     """
-    Load test data for evaluation
-    STRICT: No mock data generation, real data only
+    Load test data for evaluation using strict format-specific loaders
+    STRICT: No mock data generation, format-aware loading with detailed error reporting
     
     Args:
         data_path: Path to evaluation data file (required)
+        format_hint: Optional format hint from auto-discovery (JSONL|JSON|PARQUET)
         
     Returns:
         List of evaluation examples
@@ -103,55 +106,70 @@ def load_test_data(data_path: str) -> List[Dict[str, Any]]:
         logger.error("ERROR: dataset not provided. Pass --data /path/to/file or set data: in config.")
         sys.exit(EXIT_ARGS_ERROR)
     
-    data_file = Path(data_path)
+    data_file = Path(data_path).resolve()
     
+    # Basic file existence checks (load_dataset will do more detailed validation)
     if not data_file.exists():
         logger.error(f"ERROR: dataset file not found: {data_path}")
         sys.exit(EXIT_DATA_ERROR)
     
-    if data_file.stat().st_size == 0:
-        logger.error(f"ERROR: dataset file is empty: {data_path}")
-        sys.exit(EXIT_DATA_ERROR)
+    # Determine format (prefer hint from auto-discovery, fallback to extension)
+    detected_format = get_format_from_path(data_file)
+    final_format = format_hint or detected_format
+    
+    # Log data source with format information
+    logger.info(f"Data source: {data_file} (format={final_format})")
     
     try:
-        with open(data_file, 'r', encoding='utf-8') as f:
-            if data_file.suffix.lower() == '.json':
-                data = json.load(f)
-            elif data_file.suffix.lower() in ['.yaml', '.yml']:
-                data = yaml.safe_load(f)
-            else:
-                # Try JSON first, then YAML
-                try:
-                    f.seek(0)
-                    data = json.load(f)
-                except json.JSONDecodeError:
-                    f.seek(0)
-                    data = yaml.safe_load(f)
-        
-        if not isinstance(data, list):
-            logger.error(f"ERROR: dataset must be a list, got {type(data).__name__}")
-            sys.exit(EXIT_DATA_ERROR)
-        
-        if len(data) == 0:
-            logger.error(f"ERROR: dataset is empty (no examples)")
-            sys.exit(EXIT_DATA_ERROR)
-        
-        # Validate data structure
-        required_fields = ['question', 'reference']  # Minimal required fields
-        for i, example in enumerate(data[:5]):  # Check first 5 examples
-            missing_fields = [field for field in required_fields if field not in example]
-            if missing_fields:
-                logger.error(f"ERROR: dataset example {i} missing required fields: {missing_fields}")
-                sys.exit(EXIT_DATA_ERROR)
+        # Use strict format-specific loader
+        data = load_dataset(data_file)
         
         logger.info(f"Successfully loaded {len(data)} evaluation examples from {data_path}")
         return data
         
-    except (json.JSONDecodeError, yaml.YAMLError) as e:
-        logger.error(f"ERROR: failed to parse dataset file: {e}")
+    except DataLoadError as e:
+        # Detailed error logging for DataLoadError (includes line numbers, context)
+        if e.format_type == "JSONL" and e.line_number:
+            logger.error(f"ERROR: JSONL parse failed at line {e.line_number}")
+            logger.error(f"File: {e.file_path}")
+            if e.context:
+                logger.error(f"Context: {e.context}")
+        else:
+            logger.error(f"ERROR: {e.format_type} loading failed")
+            logger.error(f"File: {e.file_path}")
+            if e.context:
+                logger.error(f"Details: {e.context}")
+        
+        # Add resolution suggestions
+        if e.format_type == "JSONL":
+            logger.error("RESOLUTION: Check JSON syntax. Each line must be valid JSON object.")
+        elif e.format_type == "JSON":
+            logger.error("RESOLUTION: Ensure file contains valid JSON array of objects.")
+        elif e.format_type == "PARQUET":
+            logger.error("RESOLUTION: Verify required columns (id, question, reference/answer) exist.")
+        elif e.format_type == "YAML":
+            logger.error("RESOLUTION: YAML not supported for datasets. Use JSON or JSONL format.")
+        
         sys.exit(EXIT_DATA_ERROR)
+        
+    except FileNotFoundError:
+        logger.error(f"ERROR: dataset file not found: {data_path}")
+        sys.exit(EXIT_DATA_ERROR)
+        
+    except ValueError as e:
+        # Format not supported
+        supported_formats = ['.jsonl', '.json', '.parquet']
+        logger.error(f"ERROR: {e}")
+        logger.error(f"SUPPORTED FORMATS: {', '.join(supported_formats)}")
+        logger.error(f"RESOLUTION: Convert dataset to supported format or check file extension.")
+        sys.exit(EXIT_DATA_ERROR)
+        
     except Exception as e:
-        logger.error(f"ERROR: failed to load dataset: {e}")
+        # Unexpected errors
+        logger.error(f"ERROR: unexpected failure loading dataset: {e}")
+        logger.error(f"File: {data_file}")
+        logger.error(f"Format: {final_format}")
+        logger.error("RESOLUTION: Check file permissions, encoding, and format compatibility.")
         sys.exit(EXIT_DATA_ERROR)
 
 
@@ -231,12 +249,46 @@ def log_evaluation_summary(config: Dict[str, Any], data_path: str, conditions: L
                f"bertscore={include_bertscore}")
 
 
+def save_updated_config(config_path: Path, config: Dict[str, Any], data_path: str) -> None:
+    """
+    Save updated configuration with discovered data path
+    Creates backup and logs changes
+    """
+    # Create backup
+    backup_path = config_path.with_suffix(config_path.suffix + '.bak')
+    if config_path.exists():
+        shutil.copy2(config_path, backup_path)
+        logger.info(f"Configuration backup saved: {backup_path}")
+    
+    # Update config
+    original_data = config.get('data', config.get('dataset_path'))
+    config['data'] = str(data_path)
+    
+    # Save updated config
+    try:
+        if config_path.suffix.lower() in ['.yaml', '.yml']:
+            with open(config_path, 'w', encoding='utf-8') as f:
+                yaml.dump(config, f, default_flow_style=False, allow_unicode=True)
+        else:
+            with open(config_path, 'w', encoding='utf-8') as f:
+                json.dump(config, f, indent=2, ensure_ascii=False)
+        
+        logger.info(f"Configuration updated: data: {original_data} → {data_path}")
+        
+    except Exception as e:
+        logger.warning(f"Failed to save updated configuration: {e}")
+
+
 def main():
-    parser = argparse.ArgumentParser(description='Week 2 GraphRAG-CFS-Chameleon evaluation (STRICT MODE)')
+    parser = argparse.ArgumentParser(description='Week 2 GraphRAG-CFS-Chameleon evaluation (STRICT MODE + AUTO-DISCOVERY)')
     parser.add_argument('--run-id', type=str, default=None, help='Unique run identifier')
     parser.add_argument('--output-dir', type=str, default='results/w2', help='Output directory')
     parser.add_argument('--config', type=str, required=True, help='Configuration file path (REQUIRED)')
-    parser.add_argument('--data', type=str, default=None, help='Test data file path')
+    parser.add_argument('--data', type=str, default=None, help='Test data file path (overrides config)')
+    parser.add_argument('--auto-data', action='store_true', default=True, help='Enable automatic dataset discovery (default: true)')
+    parser.add_argument('--no-auto-data', dest='auto_data', action='store_false', help='Disable automatic dataset discovery')
+    parser.add_argument('--write-config', action='store_true', default=True, help='Update config file with discovered data path')
+    parser.add_argument('--no-write-config', dest='write_config', action='store_false', help='Do not update config file')
     parser.add_argument('--conditions', type=str, default='legacy_chameleon,graphrag_v1,graphrag_v1_diversity', 
                        help='Comma-separated list of conditions to evaluate')
     parser.add_argument('--include-bertscore', action='store_true', help='Force include BERTScore computation')
@@ -244,21 +296,99 @@ def main():
     parser.add_argument('--generate-report', action='store_true', help='Generate comprehensive report')
     parser.add_argument('--fast-mode', action='store_true', help='Skip slow computations for quick testing')
     parser.add_argument('--strict', action='store_true', default=True, help='Strict mode (enabled by default)')
+    parser.add_argument('--verbose', action='store_true', help='Enable verbose logging')
+    
+    # LaMP-2 constrained prompting arguments
+    parser.add_argument('--prompt-system-file', type=str, help='Path to system message file for LaMP-2 task')
+    parser.add_argument('--prompt-user-template-file', type=str, help='Path to user message template file')
+    parser.add_argument('--fewshot-builder', type=str, help='Path to few-shot block builder script')
+    parser.add_argument('--allowed-tags-file', type=str, help='Path to allowed tags file')
+    parser.add_argument('--strict-output', type=str, help='Output format validation regex (e.g., "regex:^Answer:\\s*([A-Za-z0-9_\\- ]+)\\s*$")')
+    parser.add_argument('--temperature', type=float, default=0.2, help='Temperature for generation (default: 0.2)')
+    parser.add_argument('--top-p', type=float, default=0.9, help='Top-p for generation (default: 0.9)')
+    parser.add_argument('--max-new-tokens', type=int, default=5, help='Max new tokens for generation (default: 5)')
     
     args = parser.parse_args()
     
+    # Set verbose logging if requested
+    if args.verbose:
+        logging.getLogger().setLevel(logging.DEBUG)
+    
     start_time = time.time()
     
-    logger.info("=== GraphRAG-CFS-Chameleon Week 2 Evaluation (STRICT MODE) ===")
+    logger.info("=== GraphRAG-CFS-Chameleon Week 2 Evaluation (STRICT MODE + AUTO-DISCOVERY) ===")
     
     # Load configuration (required)
     config = load_config(args.config)
+    config_path = Path(args.config).resolve()
     
-    # Determine data path: command line overrides config
-    data_path = args.data or config.get('data') or config.get('dataset_path')
-    if not data_path:
+    # Phase 1: Determine initial data path preference
+    preferred_data_path = args.data or config.get('data') or config.get('dataset_path')
+    
+    # Phase 2: Dataset discovery and validation
+    final_data_path = None
+    data_source = "unknown"
+    
+    if preferred_data_path and not args.auto_data:
+        # Manual mode: Use provided path strictly
+        logger.info("Auto-discovery disabled, using provided data path")
+        final_data_path = preferred_data_path
+        data_source = "from-args" if args.data else "from-config"
+        
+        # Still validate the provided path
+        try:
+            validated_path = discover_eval_dataset(
+                preferred_path=preferred_data_path,
+                cwd=Path.cwd(),
+                repo_root=project_root
+            )
+            final_data_path = str(validated_path)
+        except DatasetNotFound as e:
+            logger.error(f"ERROR: provided dataset path invalid: {preferred_data_path}")
+            logger.error(f"Validation failed: {e}")
+            sys.exit(EXIT_DATA_ERROR)
+            
+    elif args.auto_data:
+        # Auto-discovery mode
+        logger.info("Dataset auto-discovery enabled")
+        
+        try:
+            discovered_path = discover_eval_dataset(
+                preferred_path=preferred_data_path,
+                cwd=Path.cwd(),
+                repo_root=project_root
+            )
+            final_data_path = str(discovered_path)
+            
+            if preferred_data_path and str(discovered_path.resolve()) == str(Path(preferred_data_path).resolve()):
+                data_source = "from-args" if args.data else "from-config"
+            else:
+                data_source = "auto-discovered"
+                
+                # Update config if requested and path was discovered (not from config)
+                if args.write_config and data_source == "auto-discovered":
+                    save_updated_config(config_path, config, str(discovered_path))
+                    
+        except DatasetNotFound as e:
+            logger.error(f"ERROR: dataset not found. {e}")
+            logger.error(f"Searched patterns: {len(e.searched_patterns)} patterns")
+            logger.error(f"Search roots: {e.search_roots}")
+            logger.error("Place LaMP-2 evaluation data in: ./datasets/, ./data/, or use --data to specify location")
+            sys.exit(EXIT_DATA_ERROR)
+    else:
+        # No auto-discovery, no data provided
         logger.error("ERROR: dataset not provided. Pass --data /path/to/file or set data: in config.")
         sys.exit(EXIT_ARGS_ERROR)
+    
+    # Phase 3: Final validation and logging
+    if not final_data_path:
+        logger.error("ERROR: no valid dataset path determined")
+        sys.exit(EXIT_DATA_ERROR)
+    
+    # Log data source
+    logger.info(f"Data source: {final_data_path} ({data_source})")
+    if args.verbose:
+        logger.info(f"Discovery roots: [{Path.cwd()}, {project_root}]")
     
     # Override config with command line arguments  
     if args.fast_mode:
@@ -267,17 +397,40 @@ def main():
     elif args.include_bertscore:
         config.setdefault('evaluation', {})['include_bertscore'] = True
     
+    # Apply LaMP-2 constrained prompting settings
+    if args.prompt_system_file or args.prompt_user_template_file:
+        config.setdefault('prompting', {})
+        if args.prompt_system_file:
+            config['prompting']['system_message_file'] = args.prompt_system_file
+        if args.prompt_user_template_file:
+            config['prompting']['user_template_file'] = args.prompt_user_template_file
+        if args.fewshot_builder:
+            config['prompting']['fewshot_builder'] = args.fewshot_builder
+        if args.allowed_tags_file:
+            config['prompting']['allowed_tags_file'] = args.allowed_tags_file
+        if args.strict_output:
+            config['prompting']['strict_output_validation'] = args.strict_output
+        
+        # Override generation parameters for constrained prompting
+        config.setdefault('model', {}).update({
+            'temperature': args.temperature,
+            'top_p': args.top_p,
+            'max_new_tokens': args.max_new_tokens,
+            'do_sample': False if args.temperature == 0.0 else True
+        })
+    
     # Check dependencies before proceeding
     check_dependencies(config)
     
-    # Load test data (strict validation)
-    test_data = load_test_data(data_path)
+    # Load test data (strict validation) - use discovered path
+    # Format will be auto-detected from file extension
+    test_data = load_test_data(final_data_path)
     
     # Parse conditions
     conditions = parse_conditions(args.conditions)
     
     # Log evaluation summary
-    log_evaluation_summary(config, data_path, conditions)
+    log_evaluation_summary(config, final_data_path, conditions)
     
     # Generate unique run ID if not provided
     if not args.run_id:
@@ -292,7 +445,18 @@ def main():
     
     # Run evaluation
     logger.info("Running evaluation across all conditions...")
-    evaluation_results = evaluator.run_evaluation(test_data, conditions)
+    try:
+        evaluation_results = evaluator.run_evaluation(test_data, conditions)
+    except ValueError as e:
+        if "LaMP-2 strict validation failed" in str(e):
+            logger.error("=== STRICT VALIDATION FAILURE ===")
+            logger.error("LaMP-2 output format or tag validation failed")
+            logger.error("NO FALLBACK: Evaluation terminated immediately")
+            logger.error(f"Error details: {e}")
+            logger.error("CHECK: Model prompt compliance, allowed tags configuration")
+            sys.exit(EXIT_DEPENDENCY_ERROR)  # Use exit code 3 for validation failures
+        else:
+            raise  # Re-raise other ValueError exceptions
     
     # Perform significance testing if requested
     significance_results = {}
