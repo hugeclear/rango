@@ -18,11 +18,25 @@ Answer: <TAG>
 - Do NOT write anything before "Answer: "
 - The tag must match the allowed list EXACTLY (case-sensitive)
 - 絶対に次の形式のみで返答してください: `Answer: <label>`。前後に一切の説明文を付けないこと。
+- 出力は 1行のみ。`Answer: <label>` 以外の文字・改行・説明禁止
+- NO NEWLINES (\n) - Single line output only
+- NO EXPLANATIONS - Just the tag
 
 # EXAMPLES OF CORRECT OUTPUT
 Answer: classic
 Answer: sci-fi
 Answer: comedy
+
+# FEW-SHOT EXAMPLES
+Example 1:
+Question: A young wizard discovers he has magical powers and attends a school for wizards.
+User Profile: [fantasy movies, adventure films, family entertainment]
+Answer: fantasy
+
+Example 2:
+Question: Two detectives investigate a series of murders in a dark urban setting.
+User Profile: [crime thrillers, detective stories, suspense films]
+Answer: crime
 
 # YOUR COMPLETE RESPONSE MUST BE IN THIS FORMAT
 Answer: <TAG>

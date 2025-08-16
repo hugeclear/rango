@@ -7,10 +7,18 @@ CRITICAL RULES:
 3. Do NOT continue writing after the tag name
 4. Choose the single best tag from the allowed list
 5. 絶対に次の形式のみで返答してください: `Answer: <label>`。前後に一切の説明文を付けないこと。
+6. 出力は 1行のみ。`Answer: <label>` 以外の文字・改行・説明禁止
 
 REQUIRED OUTPUT FORMAT: Answer: <TAG>
 
 ABSOLUTE REQUIREMENT: Your response must be EXACTLY one line starting with "Answer: " and ending with a tag name. Nothing else.
+
+FORBIDDEN:
+- Multiple lines
+- Explanations before or after
+- Newlines (\n)
+- Periods or punctuation after the tag
+- Any text other than "Answer: <TAG>"
 
 Examples of CORRECT outputs:
 - Answer: classic

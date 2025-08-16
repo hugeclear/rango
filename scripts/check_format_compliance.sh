@@ -43,8 +43,12 @@ if conda run -n faiss310 python scripts/verification/ablation_study.py \
     --seed 42 \
     --strict-output "$PATTERN" \
     --reask-on-format-fail \
-    --reask-max-retries 1 \
+    --reask-max-retries 2 \
     --reask-temperature 0.0 \
+    --decoding-temperature 0.0 \
+    --decoding-top-p 0.0 \
+    --decoding-max-tokens 8 \
+    --decoding-stop-tokens "\\n" \
     --selector "cos+tags+ppr" \
     --selector-weights "alpha=1.0,beta=0.4,gamma=0.6,lambda=0.3" \
     --mmr-lambda 0.3 \
