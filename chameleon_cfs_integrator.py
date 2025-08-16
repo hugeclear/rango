@@ -124,75 +124,159 @@ class CollaborativeChameleonEditor(BaseChameleonEditor):
         logger.info(f"CollaborativeChameleonEditor initialized (collaboration: {use_collaboration})")
     
     def _load_theta_vectors(self):
-        """Theta vectors読み込み"""
+        """Theta vectors読み込み（強化版 - ファイル存在とデータ検証）"""
         try:
             import numpy as np
             from pathlib import Path
             
-            if self.theta_p_path and self.theta_n_path:
-                # パス存在確認
-                theta_p_path = Path(self.theta_p_path)
-                theta_n_path = Path(self.theta_n_path)
-                
-                if theta_p_path.exists() and theta_n_path.exists():
-                    # Theta vectors読み込み
-                    self.theta_personal = np.load(theta_p_path)
-                    self.theta_neutral = np.load(theta_n_path)
-                    logger.info(f"✅ Theta vectors loaded: P={self.theta_personal.shape}, N={self.theta_neutral.shape}")
-                else:
-                    logger.warning(f"⚠️ Theta vector files not found: {theta_p_path}, {theta_n_path}")
-                    self.theta_personal = None
-                    self.theta_neutral = None
-            else:
-                logger.warning("⚠️ Theta vector paths not specified in config")
+            if not self.theta_p_path or not self.theta_n_path:
+                error_msg = "❌ CRITICAL: Theta vector paths not specified in config"
+                logger.error(error_msg)
+                print(error_msg)
                 self.theta_personal = None
                 self.theta_neutral = None
+                return False
+            
+            # パス存在確認
+            theta_p_path = Path(self.theta_p_path)
+            theta_n_path = Path(self.theta_n_path)
+            
+            if not theta_p_path.exists():
+                error_msg = f"❌ CRITICAL: Theta personal file not found: {theta_p_path.absolute()}"
+                logger.error(error_msg)
+                print(error_msg)
+                self.theta_personal = None
+                self.theta_neutral = None
+                return False
+                
+            if not theta_n_path.exists():
+                error_msg = f"❌ CRITICAL: Theta neutral file not found: {theta_n_path.absolute()}"
+                logger.error(error_msg)
+                print(error_msg)
+                self.theta_personal = None
+                self.theta_neutral = None
+                return False
+            
+            # ファイル読み込みと検証
+            self.theta_personal = np.load(theta_p_path)
+            self.theta_neutral = np.load(theta_n_path)
+            
+            # データ検証
+            if self.theta_personal.size == 0:
+                error_msg = f"❌ CRITICAL: Theta personal vector is empty"
+                logger.error(error_msg)
+                print(error_msg)
+                return False
+                
+            if self.theta_neutral.size == 0:
+                error_msg = f"❌ CRITICAL: Theta neutral vector is empty"
+                logger.error(error_msg)
+                print(error_msg)
+                return False
+                
+            if self.theta_personal.shape != self.theta_neutral.shape:
+                error_msg = f"❌ CRITICAL: Theta vector shape mismatch: P={self.theta_personal.shape}, N={self.theta_neutral.shape}"
+                logger.error(error_msg)
+                print(error_msg)
+                return False
+            
+            success_msg = f"✅ Theta vectors loaded and validated: P={self.theta_personal.shape}, N={self.theta_neutral.shape}"
+            logger.info(success_msg)
+            print(success_msg)
+            return True
                 
         except Exception as e:
-            logger.warning(f"⚠️ Theta vector loading error: {e}")
+            error_msg = f"❌ CRITICAL: Theta vector loading error: {e}"
+            logger.error(error_msg)
+            print(error_msg)
             self.theta_personal = None
             self.theta_neutral = None
+            return False
     
     def _load_direction_vectors(self):
-        """Direction vectors読み込み"""
+        """Direction vectors読み込み（強化版 - ファイル存在とデータ検証）"""
         try:
             import numpy as np
             from pathlib import Path
             
-            if self.direction_p_path and self.direction_n_path:
-                # パス存在確認
-                direction_p_path = Path(self.direction_p_path)
-                direction_n_path = Path(self.direction_n_path)
-                
-                if direction_p_path.exists() and direction_n_path.exists():
-                    # Direction vectors読み込み
-                    self.direction_personal = np.load(direction_p_path)
-                    self.direction_neutral = np.load(direction_n_path)
-                    logger.info(f"✅ Direction vectors loaded: P={self.direction_personal.shape}, N={self.direction_neutral.shape}")
-                else:
-                    logger.warning(f"⚠️ Direction vector files not found: {direction_p_path}, {direction_n_path}")
-                    self.direction_personal = None
-                    self.direction_neutral = None
-            else:
-                logger.warning("⚠️ Direction vector paths not specified in config")
+            if not self.direction_p_path or not self.direction_n_path:
+                error_msg = "❌ CRITICAL: Direction vector paths not specified in config"
+                logger.error(error_msg)
+                print(error_msg)
                 self.direction_personal = None
                 self.direction_neutral = None
+                return False
+            
+            # パス存在確認
+            direction_p_path = Path(self.direction_p_path)
+            direction_n_path = Path(self.direction_n_path)
+            
+            if not direction_p_path.exists():
+                error_msg = f"❌ CRITICAL: Direction personal file not found: {direction_p_path.absolute()}"
+                logger.error(error_msg)
+                print(error_msg)
+                self.direction_personal = None
+                self.direction_neutral = None
+                return False
+                
+            if not direction_n_path.exists():
+                error_msg = f"❌ CRITICAL: Direction neutral file not found: {direction_n_path.absolute()}"
+                logger.error(error_msg)
+                print(error_msg)
+                self.direction_personal = None
+                self.direction_neutral = None
+                return False
+            
+            # ファイル読み込みと検証
+            self.direction_personal = np.load(direction_p_path)
+            self.direction_neutral = np.load(direction_n_path)
+            
+            # データ検証
+            if self.direction_personal.size == 0:
+                error_msg = f"❌ CRITICAL: Direction personal vector is empty"
+                logger.error(error_msg)
+                print(error_msg)
+                return False
+                
+            if self.direction_neutral.size == 0:
+                error_msg = f"❌ CRITICAL: Direction neutral vector is empty"
+                logger.error(error_msg)
+                print(error_msg)
+                return False
+                
+            if self.direction_personal.shape != self.direction_neutral.shape:
+                error_msg = f"❌ CRITICAL: Direction vector shape mismatch: P={self.direction_personal.shape}, N={self.direction_neutral.shape}"
+                logger.error(error_msg)
+                print(error_msg)
+                return False
+            
+            success_msg = f"✅ Direction vectors loaded and validated: P={self.direction_personal.shape}, N={self.direction_neutral.shape}"
+            logger.info(success_msg)
+            print(success_msg)
+            return True
                 
         except Exception as e:
-            logger.warning(f"⚠️ Direction vector loading error: {e}")
+            error_msg = f"❌ CRITICAL: Direction vector loading error: {e}"
+            logger.error(error_msg)
+            print(error_msg)
             self.direction_personal = None
             self.direction_neutral = None
+            return False
     
     def generate_with_chameleon(self, prompt: str, alpha_personal: float = None, alpha_neutral: float = None, 
-                               target_layers: List[str] = None, max_length: int = 50) -> str:
+                               target_layers: List[str] = None, max_length: int = 128) -> str:
         """
-        設定ファイルのパラメータを使用したChameleon編集生成
+        設定ファイルのパラメータを使用したChameleon編集生成（フォールバック無効化版）
         """
         # Direction vectors優先で存在確認（Chameleon編集に必要）
         if self.direction_personal is None or self.direction_neutral is None:
-            logger.warning("Direction vectors not loaded, cannot perform Chameleon editing")
-            # フォールバック: 基本的なテキスト生成
-            return self._fallback_generation(prompt, max_length)
+            error_msg = "❌ ABORT: Direction vectors not loaded, Chameleon editing cannot proceed"
+            logger.error(error_msg)
+            print(error_msg)
+            print("🔧 Fix required: Check direction vector file paths in config:")
+            print(f"   - direction_p_path: {self.direction_p_path}")
+            print(f"   - direction_n_path: {self.direction_n_path}")
+            raise ValueError("Direction vectors not available - fix configuration and retry")
         
         # 設定ファイルから読み込んだパラメータを使用（引数で上書き可能）
         if alpha_personal is None and hasattr(self, '_config_alpha_personal'):
@@ -202,20 +286,35 @@ class CollaborativeChameleonEditor(BaseChameleonEditor):
         if target_layers is None and hasattr(self, '_config_target_layers'):
             target_layers = self._config_target_layers
             
-        # デフォルト値設定
+        # デフォルト値設定（config未定義の場合）
         if alpha_personal is None:
-            alpha_personal = 0.1
+            alpha_personal = 0.3
         if alpha_neutral is None:
             alpha_neutral = -0.05
         if target_layers is None:
-            target_layers = ["model.layers.16.mlp"]
+            target_layers = ["model.layers.14.mlp"]
+            
+        # パラメータ検証とデバッグ情報
+        debug_msg = f"🎯 Chameleon parameters: α_p={alpha_personal}, α_n={alpha_neutral}, max_length={max_length}, layers={target_layers}"
+        logger.info(debug_msg)
+        print(debug_msg)
         
         try:
-            # Chameleon編集実行
-            return self._execute_chameleon_generation(prompt, alpha_personal, alpha_neutral, target_layers, max_length)
+            # Chameleon編集実行（フォールバック無し）
+            result = self._execute_chameleon_generation(prompt, alpha_personal, alpha_neutral, target_layers, max_length)
+            success_msg = f"✅ Chameleon editing completed successfully: {len(result)} chars generated"
+            logger.info(success_msg)
+            print(success_msg)
+            return result
         except Exception as e:
-            logger.warning(f"Chameleon generation error: {e}")
-            return self._fallback_generation(prompt, max_length)
+            error_msg = f"❌ CRITICAL: Chameleon generation failed: {e}"
+            logger.error(error_msg)
+            print(error_msg)
+            print("🔧 Debug information:")
+            print(f"   - Model available: {hasattr(self, 'model')}")
+            print(f"   - Tokenizer available: {hasattr(self, 'tokenizer')}")
+            print(f"   - Direction vectors loaded: {self.direction_personal is not None and self.direction_neutral is not None}")
+            raise e  # フォールバックを禁止し、エラーを明示的に传播
     
     def _execute_chameleon_generation(self, prompt: str, alpha_personal: float, alpha_neutral: float, 
                                      target_layers: List[str], max_length: int) -> str:
@@ -229,8 +328,10 @@ class CollaborativeChameleonEditor(BaseChameleonEditor):
         
         # Direction vectors を使用した独自実装
         if not hasattr(self, 'model') or not hasattr(self, 'tokenizer'):
-            logger.warning("Model or tokenizer not available for Chameleon generation")
-            return self._fallback_generation(prompt, max_length)
+            error_msg = "❌ CRITICAL: Model or tokenizer not available for Chameleon generation"
+            logger.error(error_msg)
+            print(error_msg)
+            raise AttributeError("Model/tokenizer not initialized - cannot perform generation")
         
         try:
             # フック登録
@@ -248,31 +349,27 @@ class CollaborativeChameleonEditor(BaseChameleonEditor):
             # フック削除
             self._remove_direction_hooks()
             
-            return result if result else self._fallback_generation(prompt, max_length)
+            if not result or len(result.strip()) == 0:
+                error_msg = "❌ CRITICAL: Chameleon generation produced empty result"
+                logger.error(error_msg)
+                print(error_msg)
+                raise ValueError("Generation failed - empty result")
+            
+            return result
             
         except Exception as e:
-            logger.warning(f"Chameleon generation failed: {e}")
+            error_msg = f"❌ CRITICAL: Chameleon generation internal error: {e}"
+            logger.error(error_msg)
+            print(error_msg)
             self._remove_direction_hooks()  # エラー時もフック削除
-            return self._fallback_generation(prompt, max_length)
+            print("🔧 Hook removal completed after error")
+            raise e  # フォールバックを禁止し、エラーを传播
     
     def _fallback_generation(self, prompt: str, max_length: int) -> str:
-        """フォールバックテキスト生成"""
-        try:
-            # モデルが利用可能な場合は基本生成
-            if hasattr(self, 'model') and hasattr(self, 'tokenizer'):
-                inputs = self.tokenizer(prompt, return_tensors="pt", truncation=True, max_length=max_length)
-                inputs = {k: v.to(self.device) for k, v in inputs.items()}
-                
-                with torch.no_grad():
-                    outputs = self.model.generate(**inputs, max_length=max_length, do_sample=False)
-                    generated = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
-                    return generated[len(prompt):].strip()
-            else:
-                # 最終フォールバック: プロンプトをそのまま返す
-                return f"Generated response for: {prompt}"
-        except Exception as e:
-            logger.warning(f"Fallback generation error: {e}")
-            return f"Error in generation for: {prompt}"
+        """❌ DEPRECATED: フォールバック生成は廃止 - RuntimeError を投げる"""
+        error_msg = "❌ CRITICAL: Fallback generation attempted - this indicates a system failure"
+        logger.error(error_msg)
+        raise RuntimeError(error_msg + f" (prompt: '{prompt[:50]}...', max_length: {max_length})")
     
     def _register_direction_hooks(self, target_layers: List[str], alpha_personal: float, alpha_neutral: float):
         """Direction vector編集フックの登録"""
@@ -343,17 +440,16 @@ class CollaborativeChameleonEditor(BaseChameleonEditor):
             else:
                 return output_tensor
             
-            # Direction vectorsを適切な長さに調整
-            personal_vec = torch.tensor(
-                self.direction_personal[:hidden_dim],
-                dtype=output_tensor.dtype,
-                device=output_tensor.device
+            # Use fit_to_hidden to prevent dimension mismatch
+            from dimension_debug_helper import fit_to_hidden
+            
+            personal_vec = fit_to_hidden(
+                self.direction_personal, hidden_dim, output_tensor.device, output_tensor.dtype
             )
-            neutral_vec = torch.tensor(
-                self.direction_neutral[:hidden_dim],
-                dtype=output_tensor.dtype,
-                device=output_tensor.device
+            neutral_vec = fit_to_hidden(
+                self.direction_neutral, hidden_dim, output_tensor.device, output_tensor.dtype
             )
+            
             
             # 編集ベクトル計算
             edit_vector = alpha_personal * personal_vec + alpha_neutral * neutral_vec
@@ -425,7 +521,8 @@ class CollaborativeChameleonEditor(BaseChameleonEditor):
             'total_collaborations': 0,
             'cache_hits': 0,
             'avg_improvement': 0.0,
-            'privacy_applications': 0
+            'privacy_applications': 0,
+            'collaborative_directions_generated': 0
         }
         
         logger.info("Collaboration components initialized")
@@ -706,61 +803,252 @@ class CollaborativeChameleonEditor(BaseChameleonEditor):
         else:
             return edit_vector
     
-    def _generate_query_embedding(self, query_context: str, base_embedding: torch.Tensor) -> np.ndarray:
-        """クエリコンテキストから埋め込みを生成"""
-        if not query_context:
-            # コンテキストがない場合は基本埋め込みを使用
-            return base_embedding.detach().cpu().numpy().flatten()[:768]
+    def _extract_context_embedding(self, prompt: str) -> np.ndarray:
+        """
+        ユーザークエリや履歴からクエリ埋め込みを生成
         
+        Args:
+            prompt: 入力プロンプト
+            
+        Returns:
+            クエリ埋め込みベクトル (768次元)
+        """
         try:
-            # 簡単なコンテキスト埋め込み生成
-            # 実際の実装では、より高度な手法を使用
-            context_hash = hash(query_context) % 1000000
-            context_embedding = np.random.RandomState(context_hash).randn(768)
-            return context_embedding
-        except:
-            return np.zeros(768)
+            if not prompt:
+                logger.warning("Empty prompt provided for context embedding")
+                return np.zeros(768)
+            
+            # プロンプトの前処理
+            clean_prompt = prompt.strip()[:200]  # 最初の200文字を使用
+            
+            if hasattr(self, 'model') and hasattr(self, 'tokenizer'):
+                # モデルを使用した実際の埋め込み生成
+                try:
+                    inputs = self.tokenizer(clean_prompt, return_tensors='pt', truncation=True, max_length=128)
+                    inputs = {k: v.to(self.device) for k, v in inputs.items()}
+                    
+                    with torch.no_grad():
+                        # 最後の隠れ層から埋め込みを抽出
+                        outputs = self.model(**inputs, output_hidden_states=True)
+                        last_hidden_state = outputs.hidden_states[-1]  # 最後の層
+                        # 平均プーリング
+                        embedding = last_hidden_state.mean(dim=1).squeeze().cpu().numpy()
+                        
+                    # 768次元に調整（必要に応じて切り詰めまたはパディング）
+                    if embedding.shape[0] > 768:
+                        embedding = embedding[:768]
+                    elif embedding.shape[0] < 768:
+                        padded = np.zeros(768)
+                        padded[:embedding.shape[0]] = embedding
+                        embedding = padded
+                    
+                    logger.debug(f"Generated model-based embedding: shape={embedding.shape}")
+                    return embedding
+                    
+                except Exception as e:
+                    error_msg = f"❌ CRITICAL: Model-based embedding failed: {e}"
+                    logger.error(error_msg)
+                    raise RuntimeError(error_msg + f" (prompt: '{clean_prompt[:50]}...')")
+            
+            # モデル・トークナイザーが利用できない場合もRuntimeError
+            error_msg = "❌ CRITICAL: Model or tokenizer not available for context embedding extraction"
+            logger.error(error_msg)
+            raise RuntimeError(error_msg + f" (prompt: '{clean_prompt[:50]}...')")
+            
+        except Exception as e:
+            error_msg = f"❌ CRITICAL: Context embedding generation failed: {e}"
+            logger.error(error_msg)
+            raise RuntimeError(error_msg + f" (prompt: '{clean_prompt[:50]}...')")
+    
+    def _generate_query_embedding(self, query_context: str, base_embedding: torch.Tensor) -> np.ndarray:
+        """クエリコンテキストから埋め込みを生成（後方互換性のため維持）"""
+        logger.warning("_generate_query_embedding is deprecated, use _extract_context_embedding instead")
+        return self._extract_context_embedding(query_context)
+    
+    def _generate_collaborative_directions(self, user_id: str, prompt: str) -> Dict[str, torch.Tensor]:
+        """
+        協調的方向ベクトル生成
+        
+        Args:
+            user_id: ユーザーID
+            prompt: 入力プロンプト
+            
+        Returns:
+            協調的方向ベクトルの辞書
+        """
+        try:
+            if not self.use_collaboration:
+                error_msg = "❌ CRITICAL: Collaboration not enabled, cannot generate collaborative directions"
+                logger.error(error_msg)
+                raise RuntimeError(error_msg + f" (user_id: {user_id})")
+            
+            if not hasattr(self, 'direction_pool') or self.direction_pool is None:
+                error_msg = "❌ CRITICAL: Direction pool not initialized"
+                logger.error(error_msg)
+                raise RuntimeError(error_msg + f" (user_id: {user_id})")
+            
+            # Direction vectorsの基本検証
+            if self.direction_personal is None or self.direction_neutral is None:
+                error_msg = "❌ CRITICAL: Base direction vectors not loaded"
+                logger.error(error_msg)
+                raise RuntimeError(error_msg + f" (user_id: {user_id})")
+            
+            # プロンプト埋め込みを必ず生成（協調機能の前提）
+            prompt_embedding = self._extract_context_embedding(prompt)
+            
+            # 協調方向ベクトル生成
+            if user_id not in self.user_contexts:
+                # 新規ユーザー：デフォルト方向を使用
+                logger.info(f"New user {user_id}, using default directions")
+                collaborative_directions = {
+                    'personal': torch.tensor(self.direction_personal, dtype=torch.float32),
+                    'neutral': torch.tensor(self.direction_neutral, dtype=torch.float32)
+                }
+            else:
+                # 既存ユーザー：協調プールから方向を取得
+                user_context = self.user_contexts[user_id]
+                
+                # Direction poolの協調機能チェック
+                if not hasattr(self.direction_pool, 'get_collaborative_directions'):
+                    error_msg = "❌ CRITICAL: Direction pool does not support collaborative directions generation"
+                    logger.error(error_msg)
+                    raise RuntimeError(error_msg + f" (user_id: {user_id})")
+                
+                try:
+                    pool_directions = self.direction_pool.get_collaborative_directions(
+                        user_context, prompt_embedding
+                    )
+                    
+                    # プール結果の検証
+                    if not isinstance(pool_directions, dict) or 'personal' not in pool_directions or 'neutral' not in pool_directions:
+                        error_msg = "❌ CRITICAL: Invalid collaborative directions from pool"
+                        logger.error(error_msg)
+                        raise RuntimeError(error_msg + f" (user_id: {user_id}, pool_result: {type(pool_directions)})")
+                    
+                    collaborative_directions = {
+                        'personal': torch.tensor(pool_directions['personal'], dtype=torch.float32),
+                        'neutral': torch.tensor(pool_directions['neutral'], dtype=torch.float32)
+                    }
+                    
+                except Exception as e:
+                    error_msg = f"❌ CRITICAL: Failed to get collaborative directions from pool: {e}"
+                    logger.error(error_msg)
+                    raise RuntimeError(error_msg + f" (user_id: {user_id})")
+            
+            # 生成されたベクトルの検証
+            for key, vector in collaborative_directions.items():
+                if not isinstance(vector, torch.Tensor):
+                    error_msg = f"❌ CRITICAL: {key} direction is not a torch.Tensor: {type(vector)}"
+                    logger.error(error_msg)
+                    raise RuntimeError(error_msg + f" (user_id: {user_id})")
+                
+                if vector.shape[0] == 0:
+                    error_msg = f"❌ CRITICAL: {key} direction has zero length"
+                    logger.error(error_msg)
+                    raise RuntimeError(error_msg + f" (user_id: {user_id})")
+            
+            # 統計更新
+            self.collaboration_stats['collaborative_directions_generated'] += 1
+            
+            debug_msg = f"🤝 Generated collaborative directions for user {user_id}: P={collaborative_directions['personal'].shape}, N={collaborative_directions['neutral'].shape}"
+            logger.info(debug_msg)
+            print(debug_msg)
+            
+            return collaborative_directions
+            
+        except Exception as e:
+            error_msg = f"❌ CRITICAL: Collaborative direction generation failed: {e}"
+            logger.error(error_msg)
+            print(error_msg)
+            raise e
     
     def generate_with_collaborative_chameleon(self, prompt: str, user_id: str,
-                                            alpha_personal: float = 1.5, alpha_neutral: float = -0.8,
-                                            target_layers: List[str] = None, max_length: int = 50) -> str:
+                                            alpha_personal: float = None, alpha_neutral: float = None,
+                                            target_layers: List[str] = None, max_length: int = 128) -> str:
         """
-        協調的Chameleon編集を適用した生成
+        協調的Chameleon編集を適用した生成（フォールバック無効化版）
         
         Args:
             prompt: 入力プロンプト
             user_id: ユーザーID
-            alpha_personal: パーソナル方向強度
-            alpha_neutral: ニュートラル方向強度
-            target_layers: 編集対象レイヤー
+            alpha_personal: パーソナル方向強度 (Noneでconfigから読み込み)
+            alpha_neutral: ニュートラル方向強度 (Noneでconfigから読み込み)
+            target_layers: 編集対象レイヤー (Noneでconfigから読み込み)
             max_length: 最大生成長
             
         Returns:
             生成されたテキスト
-        """
-        if target_layers is None:
-            target_layers = ["model.layers.20"]
         
-        # 協調的編集フックを登録
-        self._register_collaborative_hooks(target_layers, user_id, alpha_personal, alpha_neutral)
+        Raises:
+            ValueError: 協調機能が初期化できない場合
+        """
+        # 協調機能初期化確認
+        if not self.use_collaboration:
+            error_msg = "❌ CRITICAL: Collaborative Chameleon requested but collaboration disabled"
+            logger.error(error_msg)
+            print(error_msg)
+            print("🔧 Enable collaboration: set use_collaboration=True in constructor")
+            raise ValueError("Collaboration not enabled - cannot perform collaborative editing")
+        
+        # CFSコンポーネント確認
+        if not hasattr(self, 'direction_pool') or self.direction_pool is None:
+            error_msg = "❌ CRITICAL: Collaborative direction pool not initialized"
+            logger.error(error_msg)
+            print(error_msg)
+            print("🔧 Ensure collaboration components were initialized correctly")
+            raise ValueError("Direction pool not available - collaboration system not ready")
+        
+        # 設定ファイルからパラメータ読み込み
+        if alpha_personal is None and hasattr(self, '_config_alpha_personal'):
+            alpha_personal = self._config_alpha_personal
+        if alpha_neutral is None and hasattr(self, '_config_alpha_general'):
+            alpha_neutral = self._config_alpha_general
+        if target_layers is None and hasattr(self, '_config_target_layers'):
+            target_layers = self._config_target_layers
+            
+        # デフォルト値設定
+        if alpha_personal is None:
+            alpha_personal = 0.3
+        if alpha_neutral is None:
+            alpha_neutral = -0.05
+        if target_layers is None:
+            target_layers = ["model.layers.14.mlp"]
+            
+        debug_msg = f"🤝 CFS-Chameleon parameters: user={user_id}, α_p={alpha_personal}, α_n={alpha_neutral}, max_length={max_length}, layers={target_layers}"
+        logger.info(debug_msg)
+        print(debug_msg)
         
         try:
-            # 基底クラスの生成機能を使用
-            if BASE_EDITOR_AVAILABLE and hasattr(super(), 'generate_with_chameleon'):
-                # 既存の生成メソッドがある場合
-                return super().generate_with_chameleon(
-                    prompt, alpha_personal, alpha_neutral, target_layers, max_length
-                )
-            else:
-                # フォールバック実装
-                return self._fallback_generation(prompt, max_length)
+            # 協調的方向ベクトルを生成
+            collaborative_directions = self._generate_collaborative_directions(user_id, prompt)
+            
+            # 協調的編集フックを登録
+            self._register_collaborative_hooks(target_layers, collaborative_directions, alpha_personal, alpha_neutral, user_id)
+            
+            # 生成実行
+            result = self._execute_chameleon_generation(prompt, alpha_personal, alpha_neutral, target_layers, max_length)
+            
+            success_msg = f"✅ Collaborative Chameleon editing completed: {len(result)} chars generated"
+            logger.info(success_msg)
+            print(success_msg)
+            return result
+            
+        except Exception as e:
+            error_msg = f"❌ CRITICAL: Collaborative Chameleon generation failed: {e}"
+            logger.error(error_msg)
+            print(error_msg)
+            print("🔧 Debug information:")
+            print(f"   - Collaboration enabled: {self.use_collaboration}")
+            print(f"   - Direction pool available: {hasattr(self, 'direction_pool') and self.direction_pool is not None}")
+            print(f"   - User ID provided: {user_id}")
+            raise e
                 
         finally:
             # フックを削除
-            self.remove_editing_hooks()
+            self._remove_direction_hooks()
     
-    def _register_collaborative_hooks(self, target_layers: List[str], user_id: str,
-                                    alpha_personal: float, alpha_neutral: float):
+    def _register_collaborative_hooks(self, target_layers: List[str], collaborative_directions: Dict[str, torch.Tensor],
+                                    alpha_personal: float, alpha_neutral: float, user_id: str):
         """協調的編集フックの登録"""
         def collaborative_editing_hook(module, input, output):
             """協調的編集フック"""
@@ -799,9 +1087,10 @@ class CollaborativeChameleonEditor(BaseChameleonEditor):
                     logger.warning(f"Failed to register collaborative hook on {layer_name}")
     
     def _fallback_generation(self, prompt: str, max_length: int) -> str:
-        """フォールバック生成実装"""
-        logger.warning("Using fallback generation - limited functionality")
-        return f"[Generated response for: {prompt[:50]}...]"
+        """❌ DEPRECATED: フォールバック生成は廃止 - RuntimeError を投げる"""
+        error_msg = "❌ CRITICAL: Fallback generation attempted - this indicates a system failure"
+        logger.error(error_msg)
+        raise RuntimeError(error_msg + f" (prompt: '{prompt[:50]}...', max_length: {max_length})")
     
     def train_collaboration_components(self, training_data: List[Dict[str, Any]], 
                                      epochs: int = 10) -> Dict[str, float]:

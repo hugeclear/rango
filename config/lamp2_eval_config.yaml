@@ -1,0 +1,21 @@
+assets:
+  cfs_weights_path: /home/nakata/master_thesis/rango/artifacts/20250810_053000/graphrag_cfs_weights/cfs_pool.parquet
+  chameleon_weights_path: /home/nakata/master_thesis/rango/chameleon_prime_personalization/processed/LaMP-2/
+  embeddings_path: /home/nakata/master_thesis/rango/artifacts/20250810_053000/embeddings/lamp2_user_embeddings.npy
+  faiss_index_dir: /home/nakata/master_thesis/rango/artifacts/20250810_053000/lamp2_users_hnsw
+  ppr_path: /home/nakata/master_thesis/rango/artifacts/20250810_053000/ppr_results/ppr_topk.parquet
+data: /home/nakata/master_thesis/rango/data/evaluation/lamp2_backup_eval.jsonl
+graph_rag:
+  diversity_enabled: true
+  diversity_lambda: 0.3
+  diversity_method: mmr
+model:
+  batch_size: 4
+  device: cuda
+  max_length: 512
+  name: meta-llama/Llama-3.2-3B-Instruct
+  # Optimized generation parameters for movie tag classification
+  max_new_tokens: 6
+  temperature: 0.0
+  top_p: 0.1
+  do_sample: false

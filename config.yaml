@@ -1,9 +1,12 @@
 chameleon:
-  alpha_personal: 0.3
-  alpha_general: -0.05
+  # alpha_personal: 0.3
+  # alpha_general: -0.05
+  alpha_personal: 9
+  alpha_general: -5
   num_self_generated: 10
-  target_layers:
-  - model.layers.14.mlp
+  # target_layers:
+  # - model.layers.14.mlp
+  target_layers: ["model.layers.20","model.layers.28","model.layers.30"]
   theta_p_path: chameleon_prime_personalization/processed/LaMP-2/theta_p.npy
   theta_n_path: chameleon_prime_personalization/processed/LaMP-2/theta_n.npy
   direction_p_path: chameleon_prime_personalization/processed/LaMP-2/theta_p.npy
@@ -14,7 +17,8 @@ data_sources:
   backup: data/raw/LaMP_all/LaMP_2/user-based/dev/dev_questions.json
   primary: chameleon_prime_personalization/data/raw/LaMP-2/merged.json
 evaluation:
-  max_users: 20
+  max_users
+: 20
   metrics:
   - exact_match
   - bleu_score
@@ -25,3 +29,41 @@ model:
   max_length: 512
   name: meta-llama/Llama-3.2-3B-Instruct
   torch_dtype: float32
+
+# Asset paths for GraphRAG-CFS-Chameleon system
+assets:
+  # User embeddings for similarity search
+  embeddings_path: embeddings/lamp2_user_embeddings.npy
+  # FAISS index directory for fast retrieval
+  faiss_index_dir: faiss/lamp2_users_hnsw
+  # Personalized PageRank results
+  ppr_path: ppr_results/ppr_topk.parquet
+  # CFS collaborative weights
+  cfs_weights_path: graphrag_cfs_weights/cfs_pool.parquet
+  # Chameleon model weights (optional for legacy mode)
+  chameleon_weights_path: chameleon_prime_personalization/processed/LaMP-2/
+
+# Retrieval configuration
+retrieval:
+  top_k: 10
+  similarity_threshold: 0.1
+
+# CFS (Collaborative Filtering System) configuration
+cfs:
+  enabled: true
+  max_contexts: 3
+  alpha_personal: 0.4
+  alpha_general: -0.05
+
+# Diversity selection configuration
+diversity:
+  enabled: false
+  method: mmr  # or cluster
+  lambda: 0.3
+  max_per_cluster: 3
+
+# GraphRAG configuration
+graphrag:
+  enabled: true
+  use_ppr: true
+  quantile_threshold: 0.8

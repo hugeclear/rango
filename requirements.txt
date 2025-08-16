@@ -49,6 +49,18 @@ psutil>=5.9.0
 rich>=13.0.0
 click>=8.0.0
 
+# GraphRAG and Advanced Indexing
+faiss-gpu>=1.7.4  # For similarity search and clustering
+pyarrow>=12.0.0   # For parquet file handling
+hdbscan>=0.8.33   # For advanced clustering
+umap-learn>=0.5.3 # For dimensionality reduction
+
+# Week 2 Enhanced Metrics
+rouge-score>=0.1.2
+bert-score>=0.3.13
+sacrebleu>=2.3.0
+nltk>=3.8
+
 # Optional Development Tools
 jupyter>=1.0.0
 ipykernel>=6.0.0

@@ -438,6 +438,79 @@ class CollaborativeDirectionPool:
             'avg_piece_usage': np.mean([piece.usage_count for piece in self.pieces]) if self.pieces else 0
         }
     
+    def get_collaborative_directions(self, user_context: UserContext, query_embedding: np.ndarray) -> Dict[str, np.ndarray]:
+        """
+        協調的方向ベクトル生成
+        
+        Args:
+            user_context: ユーザーコンテキスト
+            query_embedding: クエリ埋め込み
+            
+        Returns:
+            'personal'と'neutral'方向ベクトルの辞書
+        """
+        try:
+            # 最適ピース選択
+            selected_pieces = self.select_collaborative_pieces(user_context, query_embedding, top_k=8)
+            
+            if not selected_pieces:
+                logger.warning(f"No collaborative pieces found for user {user_context.user_id}")
+                # デフォルト方向を返す（エラーでなく警告レベル）
+                return {
+                    'personal': user_context.preference_vector[:min(len(user_context.preference_vector), 3072)],
+                    'neutral': np.zeros(3072, dtype=np.float32)
+                }
+            
+            # 協調的方向統合
+            collaborative_personal = self._attention_fusion(selected_pieces)
+            
+            # 個人方向とのブレンド（70%協調、30%個人）
+            personal_component = user_context.preference_vector[:min(len(user_context.preference_vector), len(collaborative_personal))]
+            if len(personal_component) < len(collaborative_personal):
+                # パディング
+                padded_personal = np.zeros_like(collaborative_personal)
+                padded_personal[:len(personal_component)] = personal_component
+                personal_component = padded_personal
+            
+            blended_personal = 0.7 * collaborative_personal + 0.3 * personal_component
+            
+            # ニュートラル方向生成（逆方向）
+            collaborative_neutral = -0.5 * blended_personal + 0.3 * np.random.randn(*blended_personal.shape) * 0.1
+            
+            # 正規化
+            if np.linalg.norm(blended_personal) > 0:
+                blended_personal = blended_personal / np.linalg.norm(blended_personal)
+            if np.linalg.norm(collaborative_neutral) > 0:
+                collaborative_neutral = collaborative_neutral / np.linalg.norm(collaborative_neutral)
+            
+            # 3072次元に調整（必要に応じて）
+            if len(blended_personal) != 3072:
+                if len(blended_personal) > 3072:
+                    blended_personal = blended_personal[:3072]
+                    collaborative_neutral = collaborative_neutral[:3072]
+                else:
+                    padded_personal = np.zeros(3072, dtype=np.float32)
+                    padded_neutral = np.zeros(3072, dtype=np.float32)
+                    padded_personal[:len(blended_personal)] = blended_personal
+                    padded_neutral[:len(collaborative_neutral)] = collaborative_neutral
+                    blended_personal = padded_personal
+                    collaborative_neutral = padded_neutral
+            
+            logger.debug(f"Generated collaborative directions for user {user_context.user_id}: P={blended_personal.shape}, N={collaborative_neutral.shape}")
+            
+            return {
+                'personal': blended_personal.astype(np.float32),
+                'neutral': collaborative_neutral.astype(np.float32)
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to generate collaborative directions: {e}")
+            # フォールバック: ユーザーの既存方向を返す
+            return {
+                'personal': user_context.preference_vector[:min(len(user_context.preference_vector), 3072)],
+                'neutral': np.zeros(3072, dtype=np.float32)
+            }
+    
     def save_pool(self, filepath: str):
         """プールの状態を保存"""
         pool_data = {

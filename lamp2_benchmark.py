@@ -231,11 +231,27 @@ Tag:"""
             
             # Step 2: Chameleon編集適用
             # edited_emb = original + α * theta_p - β * theta_n
-            edited_embedding = (
-                original_embedding + 
-                alpha * self.theta_p - 
-                beta * self.theta_n
-            )
+            
+            # Ensure dimensions match before arithmetic
+            from dimension_debug_helper import fit_to_hidden
+            if self.theta_p is not None and self.theta_n is not None:
+                # Fit theta vectors to embedding dimension
+                target_dim = len(original_embedding) if hasattr(original_embedding, '__len__') else original_embedding.shape[-1]
+                import torch
+                device = torch.device('cpu')
+                dtype = torch.float32
+                
+                fitted_theta_p = fit_to_hidden(self.theta_p, target_dim, device, dtype).cpu().numpy()
+                fitted_theta_n = fit_to_hidden(self.theta_n, target_dim, device, dtype).cpu().numpy()
+                
+                
+                edited_embedding = (
+                    original_embedding + 
+                    alpha * fitted_theta_p - 
+                    beta * fitted_theta_n
+                )
+            else:
+                edited_embedding = original_embedding
             
             # Step 3: 編集された埋め込みでLLM推論（簡略版）
             # 実際の実装では、編集した埋め込みをLLMの内部表現に注入

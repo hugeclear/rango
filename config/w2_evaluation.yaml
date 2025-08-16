@@ -1,0 +1,111 @@
+# GraphRAG-CFS-Chameleon Week 2 Evaluation Configuration
+
+# Base model configuration
+model:
+  name: "meta-llama/Llama-3.2-3B-Instruct"
+  max_length: 512
+  batch_size: 4
+  device: "cuda"
+
+# GraphRAG configuration
+graphrag:
+  enabled: true
+  cfs_pool_path: "artifacts/20250810_053000/graphrag_cfs_weights/cfs_pool.parquet"
+  user_embeddings_path: "artifacts/20250810_053000/embeddings/lamp2_user_embeddings.npy"
+  
+# Diversity selection configuration  
+diversity:
+  enabled: false  # Will be overridden per condition
+  method: "mmr"    # Options: "mmr", "greedy"
+  lambda: 0.3      # Diversity weight (0=pure relevance, 1=pure diversity)
+  min_similarity_gap: 0.1  # For greedy diversity method
+
+# Candidate selection configuration
+selection:
+  q_quantile: 0.8  # Keep top 80% of candidates by relevance
+  max_candidates: 100
+  min_weight: 1e-4
+
+# Clustering configuration
+clustering:
+  enabled: false   # Will be overridden per condition
+  algorithm: "kmeans"  # Options: "kmeans", "hdbscan"
+  n_clusters: null     # Auto-determine if null
+  max_per_cluster: 10  # Balance selection across clusters
+  min_cluster_size: 5  # For HDBSCAN
+
+# CFS (Collaborative Filtering System) configuration
+cfs:
+  enabled: true
+  alpha_personal: 0.4   # Personal direction strength
+  alpha_general: -0.05  # General direction strength (negative = suppress)
+  target_layers:
+    - "model.layers.27"
+  
+# Evaluation configuration
+evaluation:
+  include_bertscore: true
+  bertscore_model: "microsoft/deberta-base-mnli"
+  fast_metrics: false  # Set true to skip BERTScore for speed
+  max_examples: 50     # Limit for testing (set null for full evaluation)
+
+# Statistical testing configuration
+significance:
+  test_method: "ttest"        # Options: "ttest", "permutation"
+  alpha: 0.05                 # Significance level
+  correction_method: "holm"   # Multiple comparisons correction
+  n_permutations: 10000       # For permutation tests
+  bootstrap_samples: 10000    # For confidence intervals
+
+# Logging and output configuration
+output:
+  save_predictions: true
+  save_intermediate_results: true
+  log_level: "INFO"
+  
+# Condition-specific overrides (applied by evaluation runner)
+conditions:
+  legacy_chameleon:
+    legacy_mode: true
+    graphrag:
+      enabled: false
+    diversity:
+      enabled: false
+    cfs:
+      enabled: false
+      
+  graphrag_v1:
+    legacy_mode: false
+    graphrag:
+      enabled: true
+    diversity:
+      enabled: false
+    cfs:
+      enabled: true
+      
+  graphrag_v1_diversity:
+    legacy_mode: false
+    graphrag:
+      enabled: true
+    diversity:
+      enabled: true
+      method: "mmr"
+      lambda: 0.3
+    selection:
+      q_quantile: 0.8
+    cfs:
+      enabled: true
+      
+  cfs_enabled:
+    legacy_mode: false
+    graphrag:
+      enabled: true
+    cfs:
+      enabled: true
+      
+  cfs_disabled:
+    legacy_mode: false
+    graphrag:
+      enabled: false
+    cfs:
+      enabled: false

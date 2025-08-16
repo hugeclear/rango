@@ -81,13 +81,22 @@ class CFSLaMP2Evaluator:
     
     def __init__(self, data_path: str, output_dir: str = "./cfs_evaluation_results", 
                  config_path: str = None, use_collaboration: bool = False,
-                 collaboration_mode: str = "heuristic"):
+                 collaboration_mode: str = "heuristic", sample_limit: int = None,
+                 alpha_p_override: float = None, alpha_n_override: float = None,
+                 max_length_override: int = None, debug_mode: bool = False):
         
         self.data_path = Path(data_path)
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(exist_ok=True)
         self.use_collaboration = use_collaboration
         self.collaboration_mode = collaboration_mode
+        self.sample_limit = sample_limit
+        
+        # 🚀 Chameleonパラメータオーバーライド（スコア向上のため）
+        self.alpha_p_override = alpha_p_override
+        self.alpha_n_override = alpha_n_override  
+        self.max_length_override = max_length_override
+        self.debug_mode = debug_mode
         
         # 設定ファイル読み込み
         self.config_path = config_path
@@ -101,12 +110,16 @@ class CFSLaMP2Evaluator:
             'total_users': 0,
             'cold_start_users': 0,
             'warm_start_users': 0,
-            'avg_user_history_length': 0.0
+            'avg_user_history_length': 0.0,
+            'collaboration_sessions': 0  # 🔧 PRODUCTION FIX: Missing key causing KeyError
         }
         
         # データ読み込み
         self.test_data = self._load_test_data()
         self.ground_truth = self._load_ground_truth()
+        
+        # 🔧 データ整合性チェック（フォールバック完全廃止のため）
+        self._validate_data_integrity()
         
         # エディター初期化
         self._initialize_editors()
@@ -188,6 +201,10 @@ class CFSLaMP2Evaluator:
                 logger.info(f"✅ テストデータ読み込み: {merged_path}")
                 with open(merged_path, 'r', encoding='utf-8') as f:
                     data = json.load(f)
+                # サンプル制限適用
+                if self.sample_limit:
+                    data = data[:self.sample_limit]
+                    logger.info(f"📊 サンプル制限適用: {len(data)} samples (limit: {self.sample_limit})")
                 # ユーザー統計更新
                 self._update_user_statistics(data)
                 return data
@@ -210,9 +227,16 @@ class CFSLaMP2Evaluator:
                 with open(answers_path, 'r', encoding='utf-8') as f:
                     answers = json.load(f)
                 
-                # データ構造に基づいて処理
+                # 🔧 LaMP-2公式データ構造に対応: {"task":"LaMP_2", "golds":[...]}
                 ground_truth = {}
-                if isinstance(answers, list) and answers:
+                if isinstance(answers, dict) and "golds" in answers:
+                    # 公式LaMP-2形式
+                    golds = answers["golds"]
+                    if isinstance(golds, list) and golds:
+                        ground_truth = {str(ans["id"]): str(ans["output"]).lower().strip() 
+                                      for ans in golds if "id" in ans and "output" in ans}
+                elif isinstance(answers, list) and answers:
+                    # 従来形式（フォールバック）
                     sample = answers[0]
                     if isinstance(sample, dict) and "id" in sample and "output" in sample:
                         ground_truth = {str(ans["id"]): str(ans["output"]).lower().strip() 
@@ -221,8 +245,10 @@ class CFSLaMP2Evaluator:
                 logger.info(f"   正解データ変換完了: {len(ground_truth)} サンプル")
                 return ground_truth
         
-        logger.warning("正解データが見つかりません - 比較評価モードで続行")
-        return {}
+        # 🚨 CRITICAL: LaMP-2公式データセットで正解データがないのは異常
+        error_msg = "❌ CRITICAL: 正解データファイルが見つかりません - LaMP-2データセットが不完全です"
+        logger.error(error_msg)
+        raise FileNotFoundError(f"{error_msg}. 確認してください: answers.json が正しい場所に存在するか")
     
     def _load_theta_vectors(self):
         """Theta vectors読み込み"""
@@ -242,6 +268,52 @@ class CFSLaMP2Evaluator:
                 return
         
         logger.warning("Theta vectors not found - 協調機能のみで評価")
+    
+    def _validate_data_integrity(self):
+        """
+        🚨 CRITICAL: LaMP-2データ整合性チェック
+        
+        フォールバック完全廃止のため、評価前に必ずデータの整合性を確認。
+        不整合があれば即座に例外を投げてシステムを停止する。
+        """
+        logger.info("🔧 LaMP-2データ整合性チェック開始")
+        
+        if not self.test_data:
+            error_msg = "❌ CRITICAL: テストデータが空です"
+            logger.error(error_msg)
+            raise RuntimeError(f"{error_msg} - データ読み込みに失敗しています")
+        
+        if not self.ground_truth:
+            error_msg = "❌ CRITICAL: 正解データが空です"
+            logger.error(error_msg)
+            raise RuntimeError(f"{error_msg} - LaMP-2データセットが不完全です")
+        
+        # サンプルIDと正解データの完全一致チェック
+        missing_answers = []
+        sample_ids = []
+        
+        for sample in self.test_data:
+            sample_id = str(sample.get('id', ''))
+            sample_ids.append(sample_id)
+            
+            if sample_id not in self.ground_truth:
+                missing_answers.append(sample_id)
+        
+        # 欠損チェック
+        if missing_answers:
+            error_msg = (f"❌ CRITICAL: 次の{len(missing_answers)}個のサンプルに正解データがありません: "
+                        f"{missing_answers[:10]}{'...' if len(missing_answers) > 10 else ''}")
+            logger.error(error_msg)
+            logger.error(f"   総サンプル数: {len(sample_ids)}")
+            logger.error(f"   正解データ数: {len(self.ground_truth)}")
+            logger.error(f"   欠損サンプル数: {len(missing_answers)}")
+            raise RuntimeError(f"{error_msg} - LaMP-2データセット整合性エラー")
+        
+        # 成功メッセージ
+        success_msg = (f"✅ LaMP-2データ整合性チェック完了: "
+                      f"サンプル{len(self.test_data)}件、正解{len(self.ground_truth)}件、100%一致")
+        logger.info(success_msg)
+        print(success_msg)
     
     def _update_user_statistics(self, data: List[Dict]):
         """ユーザー統計更新"""
@@ -275,17 +347,32 @@ class CFSLaMP2Evaluator:
                 logger.info(f"   進捗: {i}/{len(self.test_data)}")
             
             try:
+                # 🚀 オーバーライドパラメータまたはデフォルト値を使用（スコア向上）
+                alpha_p = self.alpha_p_override if self.alpha_p_override is not None else 1.5
+                alpha_n = self.alpha_n_override if self.alpha_n_override is not None else -0.8
+                max_len = self.max_length_override if self.max_length_override is not None else 10
+                
                 # 従来のChameleon生成
                 prompt = self._create_movie_prompt(sample)
                 response = self.legacy_editor.generate_with_chameleon(
                     prompt=prompt,
-                    alpha_personal=1.5,
-                    alpha_neutral=-0.8,
-                    max_length=10
+                    alpha_personal=alpha_p,
+                    alpha_neutral=alpha_n,
+                    max_length=max_len
                 )
                 
                 prediction = self._extract_tag_from_response(response)
                 predictions.append(prediction)
+                
+                # 🚀 デバッグ情報表示（スコア分析のため）
+                if hasattr(self, 'debug_mode') and getattr(self, 'debug_mode', False):
+                    sample_id = str(sample.get('id', ''))
+                    actual_answer = self.ground_truth.get(sample_id, 'unknown')
+                    logger.info(f"   [Legacy] Sample {sample_id}: Predicted='{prediction}', Actual='{actual_answer}', Response='{response[:100]}...'")
+                    if prediction == actual_answer:
+                        logger.info(f"   ✅ MATCH!")
+                    else:
+                        logger.info(f"   ❌ MISMATCH")
                 
             except Exception as e:
                 logger.warning(f"サンプル{i}評価エラー: {e}")
@@ -316,18 +403,33 @@ class CFSLaMP2Evaluator:
                 # ユーザーID抽出
                 user_id = str(sample.get('id', ''))[:3]
                 
+                # 🚀 オーバーライドパラメータまたはデフォルト値を使用（スコア向上）
+                alpha_p = self.alpha_p_override if self.alpha_p_override is not None else 1.5
+                alpha_n = self.alpha_n_override if self.alpha_n_override is not None else -0.8
+                max_len = self.max_length_override if self.max_length_override is not None else 10
+                
                 # CFS-Chameleon協調生成
                 prompt = self._create_movie_prompt(sample)
                 response = self.cfs_editor.generate_with_collaborative_chameleon(
                     prompt=prompt,
                     user_id=user_id,
-                    alpha_personal=1.5,
-                    alpha_neutral=-0.8,
-                    max_length=10
+                    alpha_personal=alpha_p,
+                    alpha_neutral=alpha_n,
+                    max_length=max_len
                 )
                 
                 prediction = self._extract_tag_from_response(response)
                 predictions.append(prediction)
+                
+                # 🚀 デバッグ情報表示（スコア分析のため）
+                if hasattr(self, 'debug_mode') and getattr(self, 'debug_mode', False):
+                    sample_id = str(sample.get('id', ''))
+                    actual_answer = self.ground_truth.get(sample_id, 'unknown')
+                    logger.info(f"   [CFS] Sample {sample_id}: Predicted='{prediction}', Actual='{actual_answer}', Response='{response[:100]}...'")
+                    if prediction == actual_answer:
+                        logger.info(f"   ✅ MATCH!")
+                    else:
+                        logger.info(f"   ❌ MISMATCH")
                 
                 self.evaluation_stats['collaboration_sessions'] += 1
                 
@@ -431,16 +533,55 @@ class CFSLaMP2Evaluator:
         return "general movie preferences"
     
     def _create_movie_prompt(self, sample: Dict) -> str:
-        """映画プロンプト生成"""
-        return f"Given the following movie description, provide a single word tag that best describes the movie:\n\nMovie: {sample['input']}\n\nTag:"
+        """🚀 改良版映画プロンプト（スコア向上のため）"""
+        # より具体的で厳密なプロンプト
+        genre_examples = "action, comedy, drama, horror, romance, sci-fi, fantasy, thriller, crime, classic, violence, dark comedy, twist ending, true story, based on a book, thought-provoking, social commentary, psychology, dystopia"
+        
+        return f"""Classify the following movie into ONE specific genre tag. Choose the most accurate tag from these options: {genre_examples}
+
+Movie Description: {sample['input']}
+
+Most accurate genre tag:"""
     
     def _extract_tag_from_response(self, response: str) -> str:
-        """レスポンスからタグ抽出"""
+        """🚀 改良版タグ抽出（スコア向上のため）"""
         if not response:
             return "unknown"
         
-        # 最初の単語を抽出
-        words = response.strip().lower().split()
+        # より厳密なタグ抽出とマッピング
+        response = response.strip().lower()
+        
+        # 一般的な映画ジャンルキーワードをチェック
+        genre_keywords = {
+            'action': ['action', 'fight', 'war', 'battle', 'adventure'],
+            'comedy': ['comedy', 'funny', 'humor', 'laugh', 'comic'],
+            'drama': ['drama', 'dramatic', 'emotional'],
+            'horror': ['horror', 'scary', 'fear', 'terror'],
+            'romance': ['romance', 'love', 'romantic'],
+            'sci-fi': ['sci-fi', 'science', 'future', 'space', 'robot'],
+            'fantasy': ['fantasy', 'magic', 'wizard', 'supernatural'],
+            'thriller': ['thriller', 'suspense', 'mystery'],
+            'crime': ['crime', 'criminal', 'police', 'detective'],
+            'classic': ['classic', 'old', 'vintage', 'traditional'],
+            'violence': ['violence', 'violent', 'brutal', 'killing'],
+            'dark comedy': ['dark comedy', 'black comedy', 'dark humor'],
+            'twist ending': ['twist', 'surprise', 'unexpected'],
+            'true story': ['true story', 'based on', 'real', 'biography'],
+            'based on a book': ['book', 'novel', 'adaptation'],
+            'thought-provoking': ['thought-provoking', 'deep', 'philosophical'],
+            'social commentary': ['social', 'society', 'political', 'commentary'],
+            'psychology': ['psychology', 'psychological', 'mind', 'mental'],
+            'dystopia': ['dystopia', 'dystopian', 'future society']
+        }
+        
+        # キーワードマッチング
+        for genre, keywords in genre_keywords.items():
+            for keyword in keywords:
+                if keyword in response:
+                    return genre
+        
+        # フォールバック: 最初の単語を抽出
+        words = response.split()
         if words:
             tag = words[0]
             # 句読点除去
@@ -463,19 +604,11 @@ class CFSLaMP2Evaluator:
                 pred_labels.append(predictions[i])
         
         if not true_labels:
-            # 正解データがない場合はダミー値
-            logger.warning("正解データがありません - ダミー値で評価続行")
-            return CFSEvaluationResult(
-                method_name=method_name,
-                accuracy=0.5,
-                f1_macro=0.5,
-                f1_micro=0.5,
-                precision=0.5,
-                recall=0.5,
-                inference_time=inference_time,
-                total_samples=len(predictions),
-                correct_predictions=0
-            )
+            # 🚨 CRITICAL: LaMP-2で正解データがないのは絶対にありえない
+            error_msg = (f"❌ CRITICAL: サンプル{len(predictions)}件中、正解データが0件しかありません。"
+                        f"LaMP-2データセットの整合性チェックに失敗しました。")
+            logger.error(error_msg)
+            raise RuntimeError(f"{error_msg} データ読み込みまたはサンプル選択にバグがあります。")
         
         # 標準メトリクス計算
         accuracy = accuracy_score(true_labels, pred_labels)
@@ -772,6 +905,20 @@ def create_enhanced_argument_parser():
                        help='協調方向プールサイズ')
     parser.add_argument('--evaluation_mode', choices=['legacy', 'cfs', 'comparison'],
                        default='comparison', help='評価モード選択')
+    parser.add_argument('--sample_limit', type=int, default=None,
+                       help='評価サンプル数制限（高速テスト用）')
+    parser.add_argument('--include_baseline', action='store_true',
+                       help='ベースモデル（編集なし）も評価に含める')
+    parser.add_argument('--debug_mode', action='store_true',
+                       help='デバッグ情報を詳細出力')
+    
+    # 🚀 Chameleon パラメータ調整引数（スコア向上のため）
+    parser.add_argument('--alpha_p', type=float, default=None,
+                       help='パーソナル方向強度 (デフォルト: configから読み込み)')
+    parser.add_argument('--alpha_n', type=float, default=None, 
+                       help='ニュートラル方向強度 (デフォルト: configから読み込み)')
+    parser.add_argument('--max_length', type=int, default=None,
+                       help='生成最大長 (デフォルト: configから読み込み)')
     
     return parser
 
@@ -790,7 +937,13 @@ def main():
         output_dir=args.output_dir,
         config_path=args.config,
         use_collaboration=args.use_collaboration,
-        collaboration_mode=args.collaboration_mode
+        collaboration_mode=args.collaboration_mode,
+        sample_limit=args.sample_limit,
+        # 🚀 Chameleonパラメータのオーバーライド（スコア向上）
+        alpha_p_override=args.alpha_p,
+        alpha_n_override=args.alpha_n,
+        max_length_override=args.max_length,
+        debug_mode=args.debug_mode
     )
     
     try:

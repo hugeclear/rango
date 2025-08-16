@@ -1,0 +1,60 @@
+============================================================
+LaMP ベンチマーク検証レポート
+============================================================
+生成日時: 2025-07-07 00:45:57
+
+検証結果概要:
+  - 検証タスク数: 7
+  - 正常タスク数: 6
+  - 成功率: 85.7%
+
+【LaMP-1】Personalized Citation Identification
+  状態: ✓ 正常
+  ベンチマークスコア: 1.000
+  データ統計:
+    User-based: Train=9682, Dev=2500, Test=2500
+    Time-based: Train=9682, Dev=2500, Test=2500
+
+【LaMP-3】Personalized Product Review Rating
+  状態: ✓ 正常
+  ベンチマークスコア: 1.000
+  データ統計:
+    User-based: Train=0, Dev=2500, Test=2500
+    Time-based: Train=0, Dev=2500, Test=2500
+
+【LaMP-4】Personalized News Recommendation
+  状態: ✓ 正常
+  ベンチマークスコア: 1.000
+  データ統計:
+    User-based: Train=12527, Dev=1925, Test=2376
+    Time-based: Train=12527, Dev=1925, Test=2376
+
+【LaMP-5】Personalized Scholarly Paper Recommendation
+  状態: ✓ 正常
+  ベンチマークスコア: 1.000
+  データ統計:
+    User-based: Train=9682, Dev=2500, Test=2500
+    Time-based: Train=9682, Dev=2500, Test=2500
+
+【LaMP-2】Personalized Movie Tagging
+  状態: ✗ 問題あり
+  ベンチマークスコア: 0.250
+  データ統計:
+    User-based: Train=0, Dev=0, Test=0
+    Time-based: Train=0, Dev=0, Test=0
+  推奨アクション:
+    - Missing files: ['user-based/train/train_questions.json', 'user-based/train/train_outputs.json', 'user-based/dev/dev_questions.json', 'user-based/dev/dev_outputs.json', 'user-based/test/test_questions.json', 'time-based/train/train_questions.json', 'time-based/train/train_outputs.json', 'time-based/dev/dev_questions.json', 'time-based/dev/dev_outputs.json', 'time-based/test/test_questions.json']
+
+【LaMP-6】Personalized Email Subject Generation
+  状態: ✓ 正常
+  ベンチマークスコア: 1.000
+  データ統計:
+    User-based: Train=4840, Dev=1353, Test=1246
+    Time-based: Train=4840, Dev=1353, Test=1246
+
+【LaMP-7】Personalized Tweet Paraphrasing
+  状態: ✓ 正常
+  ベンチマークスコア: 1.000
+  データ統計:
+    User-based: Train=10437, Dev=1500, Test=1496
+    Time-based: Train=10437, Dev=1500, Test=1496
