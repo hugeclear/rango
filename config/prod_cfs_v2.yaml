@@ -1,0 +1,75 @@
+---
+# Production RC Configuration: V2 (Gate + Curriculum + Anti-Hub) - Conservative
+# Purpose: Production-ready configuration with conservative curriculum (hard=0)
+# Target: Stable deployment with quality improvement, minimal risk
+
+# Base configuration
+data: "/tmp/lamp2_rc_test.jsonl"
+
+# Model configuration
+model:
+  batch_size: 4
+  device: cuda
+  max_length: 512
+  name: meta-llama/Llama-3.2-3B-Instruct
+  max_new_tokens: 6
+  temperature: 0.0
+  top_p: 0.1
+  do_sample: false
+
+# Asset paths
+assets:
+  cfs_weights_path: /home/nakata/master_thesis/rango/artifacts/20250810_053000/graphrag_cfs_weights/cfs_pool.parquet
+  chameleon_weights_path: /home/nakata/master_thesis/rango/chameleon_prime_personalization/processed/LaMP-2/
+  embeddings_path: /home/nakata/master_thesis/rango/artifacts/20250810_053000/embeddings/lamp2_user_embeddings.npy
+  faiss_index_dir: /home/nakata/master_thesis/rango/artifacts/20250810_053000/lamp2_users_hnsw
+  ppr_path: /home/nakata/master_thesis/rango/artifacts/20250810_053000/ppr_results/ppr_topk.parquet
+
+# V2 Production Settings: Gate + Curriculum + Anti-Hub
+graph_rag:
+  # Selector configuration (cos+tags+ppr composite scoring)
+  selector: "cos+tags+ppr"
+  selector_weights:
+    alpha: 1.0    # Base weight
+    beta: 0.4     # Cosine similarity weight
+    gamma: 0.6    # Tag matching weight
+    lambda: 0.3   # PPR weight (redundancy penalty)
+  
+  # MMR diversity
+  diversity_enabled: true
+  diversity_method: mmr
+  diversity_lambda: 0.3
+  
+  # Adaptive K selection
+  adaptive_k:
+    enabled: true
+    min: 1
+    max: 5
+    tau: 0.05
+  
+  # Conservative curriculum (hard=0 for stability)
+  neg_curriculum: "easy:1,medium:0,hard:0"
+  
+  # Anti-hub sampling
+  anti_hub: true
+  ppr_restart: 0.15
+  hub_degree_cap: 200
+
+# Evaluation settings
+evaluation:
+  include_bertscore: false
+  strict_output: 'regex:^Answer:\s*([A-Za-z0-9_\- ]+)\s*$'
+  seed: 42
+
+# Prompt settings for LaMP-2
+prompts:
+  system_file: "prompts/lamp2_system.txt"
+  user_template_file: "prompts/lamp2_user_template.txt"
+  fewshot_builder: "scripts/tools/build_fewshot_block.py"
+  allowed_tags_file: "assets/labels/allowed_tags.txt"
+
+# Generation parameters  
+generation:
+  temperature: 0.2
+  top_p: 0.9
+  max_new_tokens: 5

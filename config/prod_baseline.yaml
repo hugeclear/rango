@@ -1,0 +1,69 @@
+---
+# Production Baseline Configuration: Rollback-safe baseline
+# Purpose: Fallback configuration without advanced features
+# Target: Stable baseline for comparison and emergency rollback
+
+# Base configuration
+data: "/tmp/lamp2_rc_test.jsonl"
+
+# Model configuration
+model:
+  batch_size: 4
+  device: cuda
+  max_length: 512
+  name: meta-llama/Llama-3.2-3B-Instruct
+  max_new_tokens: 6
+  temperature: 0.0
+  top_p: 0.1
+  do_sample: false
+
+# Asset paths
+assets:
+  cfs_weights_path: /home/nakata/master_thesis/rango/artifacts/20250810_053000/graphrag_cfs_weights/cfs_pool.parquet
+  chameleon_weights_path: /home/nakata/master_thesis/rango/chameleon_prime_personalization/processed/LaMP-2/
+  embeddings_path: /home/nakata/master_thesis/rango/artifacts/20250810_053000/embeddings/lamp2_user_embeddings.npy
+  faiss_index_dir: /home/nakata/master_thesis/rango/artifacts/20250810_053000/lamp2_users_hnsw
+  ppr_path: /home/nakata/master_thesis/rango/artifacts/20250810_053000/ppr_results/ppr_topk.parquet
+
+# Baseline GraphRAG (minimal features)
+graph_rag:
+  diversity_enabled: false
+  diversity_method: none
+  diversity_lambda: 0.0
+  
+  # Basic selector (no advanced features)
+  selector: "basic"
+  
+  # No adaptive K
+  adaptive_k:
+    enabled: false
+    min: 5
+    max: 5
+    tau: 0.0
+  
+  # No curriculum learning
+  neg_curriculum: ""
+  
+  # No anti-hub sampling
+  anti_hub: false
+  ppr_restart: 0.15
+  hub_degree_cap: 1000
+
+# Evaluation settings
+evaluation:
+  include_bertscore: false
+  strict_output: 'regex:^Answer:\s*([A-Za-z0-9_\- ]+)\s*$'
+  seed: 42
+
+# Prompt settings for LaMP-2
+prompts:
+  system_file: "prompts/lamp2_system.txt"
+  user_template_file: "prompts/lamp2_user_template.txt"
+  fewshot_builder: "scripts/tools/build_fewshot_block.py"
+  allowed_tags_file: "assets/labels/allowed_tags.txt"
+
+# Generation parameters
+generation:
+  temperature: 0.2
+  top_p: 0.9
+  max_new_tokens: 5
