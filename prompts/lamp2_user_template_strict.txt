@@ -1,0 +1,25 @@
+# Task
+Classify the following movie description into exactly one tag from the allowed list.
+
+# Description
+{{QUESTION}}
+
+# User Profile (optional)
+{{USER_PROFILE}}
+
+# Allowed tags (pick ONE, case-sensitive)
+{{ALLOWED_TAGS}}
+
+# Output constraints (絶対遵守)
+- Single line only.
+- EXACT string format: Answer: <TAG>
+- Nothing else before or after.
+- No newline characters.
+
+# Examples of CORRECT output
+Answer: classic
+Answer: sci-fi
+Answer: comedy
+
+# Your response (must be exactly one line in this exact format)
+Answer: <TAG>
