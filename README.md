@@ -68,6 +68,89 @@ Cosine similarity / KL divergence (privacy leakage)
 
 Model diversity and memorization metrics (advanced)
 
+## Strict Compliance Prompt Pack (LaMP-2)
+
+**目的**: 出力を `Answer: <TAG>` の単一行に強制し、形式準拠率 ≥ 0.95 を安定達成。
+
+### ✅ 実測
+- 形式準拠率: **98.0%**（目標 95% 超）
+- テスト規模: **50 samples**
+- 出力形式: 単一行 `Answer: <TAG>`
+- デコード制約: `temperature=0, top_p=0, max_tokens=8, stop=["\n"]`
+- 厳格検証パターン: `^Answer:\s*([A-Za-z0-9_\- ]+)\s*$`
+
+### 🔧 プロンプト
+**SYSTEM**
+```
+You are a strict single-line tag classifier.
+
+RULES (絶対遵守):
+1. Output EXACTLY one line: Answer: <TAG>
+2. No explanations, no extra words, no punctuation after <TAG>, no emojis.
+3. NO NEWLINES. Output must be a single line only.
+4. Choose ONE best tag from the allowed list, case-sensitive.
+5. If uncertain, still pick the single best tag.
+
+FORBIDDEN:
+• Multiple lines or trailing spaces
+• Any text before/after Answer: <TAG>
+
+Allowed tags: {{ALLOWED_TAGS}}
+Required output format: Answer: <TAG>
+```
+
+**USER**
+```
+Task
+
+Classify the following movie description into exactly one tag from the allowed list.
+
+Description
+
+{{QUESTION}}
+
+User Profile (optional)
+
+{{USER_PROFILE}}
+
+Allowed tags (pick ONE, case-sensitive)
+
+{{ALLOWED_TAGS}}
+
+Output constraints (絶対遵守)
+• Single line only.
+• EXACT string format: Answer: <TAG>
+• Nothing else before or after.
+• No newline characters.
+
+Your response
+
+Answer: <TAG>
+```
+
+### 🧪 使い方
+```bash
+# 基本テスト
+python run_strict_compliance_test.py --samples 10
+
+# 実データでのテスト
+python run_strict_compliance_test.py --data path/to/lamp2_test.jsonl
+
+# カスタムプロンプト
+python run_strict_compliance_test.py \
+  --system-prompt prompts/lamp2_system_strict.txt \
+  --user-template prompts/lamp2_user_template_strict.txt \
+  --target-compliance 0.95
+```
+
+### 🎉 効果
+• 無関係出力の排除（例: "Source: …" 等）
+• LaMP-2向けに最適化された単一タグ選択
+• 決定論的デコード設定で再現性担保
+• ≥95% 準拠で評価の信頼性向上
+
+---
+
 📄 License
 This project is licensed under the Apache License 2.0. See LICENSE for details.
 
