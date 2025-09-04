@@ -1,12 +1,17 @@
 # TASK
-You will classify the question into exactly one tag.
+Classify the movie description into exactly one tag from this closed set:
+[action, adventure, animation, comedy, crime, drama, fantasy, horror, mystery, romance, sci-fi, thriller, war, western, family]
+Output only the tag, nothing else.
 
 # INPUT
-Question: {QUESTION}
-User Profile: {USER_PROFILE}
+<user profile excerpt>
+{USER_PROFILE}
+
+<movie description>
+{QUESTION}
 
 # CONSTRAINTS
-Allowed Tags: {ALLOWED_TAGS_COMMA_SEPARATED}
+Allowed Tags (closed set): {ALLOWED_TAGS_COMMA_SEPARATED}
 
 # OUTPUT FORMAT (STRICT)
 Answer: <TAG>

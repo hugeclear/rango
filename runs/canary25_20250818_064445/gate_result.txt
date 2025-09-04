@@ -1,0 +1,1 @@
+CANARY(25) GATE | compliance=1.000 (>= 0.95) | quality=0.658 (>= 0.6) | PASS

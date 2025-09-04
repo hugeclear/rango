@@ -1,0 +1,4 @@
+CANARY(10) GATE | compliance=1.000 (>= 0.95) | quality=0.482 (>= 0.6) | FAIL
+- strict   : runs/canary10_20250817_205925/strict_report.json
+- ablation : runs/canary10_20250817_205925/ablation_study_report.json
+- log      : runs/canary10_20250817_205925/out.log

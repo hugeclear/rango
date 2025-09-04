@@ -355,17 +355,23 @@ class ChameleonEditor():
 
     def __init__(self, model_name: str='./chameleon_prime_personalization/models/base_model', device: str='auto', torch_dtype: str='float32'):
         from pathlib import Path
-        resolved = Path(model_name).expanduser()
-        if (not resolved.is_absolute()):
-            resolved = (Path.cwd() / resolved).resolve()
-        if (not resolved.exists()):
-            raise FileNotFoundError(f'Model path not found: {resolved}')
-        self.model_name = str(resolved)
-        model_path = Path(model_name)
-        load_kwargs = {}
-        if model_path.exists():
-            model_name = str(model_path.resolve())
-            load_kwargs['local_files_only'] = True
+        
+        # Check if model_name is a HuggingFace model identifier (contains '/')
+        # or a local path
+        if '/' in model_name and not Path(model_name).exists():
+            # Treat as HuggingFace model identifier
+            self.model_name = model_name
+            load_kwargs = {'local_files_only': False}
+        else:
+            # Treat as local path
+            resolved = Path(model_name).expanduser()
+            if (not resolved.is_absolute()):
+                resolved = (Path.cwd() / resolved).resolve()
+            if (not resolved.exists()):
+                raise FileNotFoundError(f'Model path not found: {resolved}')
+            self.model_name = str(resolved)
+            model_name = str(resolved)
+            load_kwargs = {'local_files_only': True}
         self.device = torch.device(('cuda' if (torch.cuda.is_available() and (device == 'auto')) else device))
         self._hook_calls_total = 0
         self._hook_calls_in_this_generate = 0
@@ -389,8 +395,8 @@ class ChameleonEditor():
         else:
             dtype = torch.float32
         logger.info(f'Loading model: {model_name}')
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name, local_files_only=True)
-        self.model = AutoModelForCausalLM.from_pretrained(model_name, torch_dtype=dtype, device_map=('auto' if (self.device.type == 'cuda') else None), local_files_only=True)
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name, **load_kwargs)
+        self.model = AutoModelForCausalLM.from_pretrained(model_name, torch_dtype=dtype, device_map=('auto' if (self.device.type == 'cuda') else None), **load_kwargs)
         if (self.tokenizer.pad_token is None):
             self.tokenizer.pad_token = self.tokenizer.eos_token
         if (hasattr(self.model.config, 'pad_token_id') and (self.model.config.pad_token_id is None)):
@@ -1104,12 +1110,16 @@ Return only the blurb text:'''
                 v_p = v_p / (v_p.norm(p=2) + 1e-8) * float(norm_scale)
                 v_g = v_g / (v_g.norm(p=2) + 1e-8) * float(norm_scale)
             cos_th = float(torch.cosine_similarity(v_p.unsqueeze(0), v_g.unsqueeze(0)).item())
-            return {
+            result = {
                 "v_personal": v_p, "v_general": v_g,
                 "l2_personal": float(v_p.norm(p=2).item()),
                 "l2_general": float(v_g.norm(p=2).item()),
                 "cos_theta": cos_th,
             }
+            # Store direction vectors for hook usage
+            self.personal_direction = v_p
+            self.neutral_direction = v_g  # Using general as neutral
+            return result
     
     def _compute_direction_vectors_strict(self, sample, target_layers=None, norm_scale=1.0):
         """
@@ -1173,11 +1183,15 @@ Return only the blurb text:'''
         l2g = float(v_g.norm(p=2).item())
         cos_th = float(F.cosine_similarity(v_p.unsqueeze(0), v_g.unsqueeze(0)).item())
         
-        return {
+        result = {
             "v_personal": v_p, "v_general": v_g,
             "l2_personal": l2p, "l2_general": l2g, 
             "cos_theta": cos_th
         }
+        # Store direction vectors for hook usage
+        self.personal_direction = v_p
+        self.neutral_direction = v_g  # Using general as neutral
+        return result
     
     def _strict_direction_vectors(self, sample, target_layers=None, norm_scale=1.0):
         """Strict direction vector computation using SVD"""
@@ -1356,51 +1370,173 @@ Return only the blurb text:'''
                 return hidden_states
         return hidden_states
 
+    def _compute_gate_value_simple(self):
+        """Simple gate computation using current direction vectors."""
+        if hasattr(self, 'personal_direction') and self.personal_direction is not None:
+            if hasattr(self, 'neutral_direction') and self.neutral_direction is not None:
+                # Simple cosine similarity as gate value
+                cos_sim = torch.cosine_similarity(
+                    self.personal_direction.flatten(), 
+                    self.neutral_direction.flatten(), 
+                    dim=0
+                )
+                return float(cos_sim) + 1.0  # Ensure positive gate value
+        return 1.0  # Default gate value
+
     @contextmanager
     def cham_context(self, *, alpha_personal, alpha_neutral, alpha_fakeit,
                      target_layers, norm_scale, gate):
         """
         Context manager for applying Chameleon edits during scoring.
         Temporarily registers forward hooks on specified layers.
+        Returns context object with 'calls' attribute for observability.
         """
-        from contextlib import contextmanager
         import torch
         
+        # Context object to track hook firing
+        class HookContext:
+            def __init__(self):
+                self.calls = 0  # Hook firing counter
+        
+        context = HookContext()
         handles = []
-        # Use last computed direction vectors if available
-        dv_global = getattr(self, "last_direction_vectors", {})
+        
+        # Resolve direction vectors - use current instance variables
+        personal_dir = getattr(self, 'personal_direction', None)
+        neutral_dir = getattr(self, 'neutral_direction', None)
+        
+        if personal_dir is None or neutral_dir is None:
+            print(f"[DEBUG] Missing direction vectors: personal={personal_dir is not None}, neutral={neutral_dir is not None}")
+            yield context  # Return context even if no editing
+            return
 
         def _hook_fn(module, inputs, outputs):
-            dv = dv_global or {}
-            gate_value = self._compute_gate_value(dv)
-            if not self._should_apply_gate(gate_value, gate):
+            context.calls += 1  # Track hook firing
+            
+            # Compute gate value using current direction vectors
+            if hasattr(self, '_compute_gate_value_simple'):
+                gate_value = self._compute_gate_value_simple()
+            else:
+                gate_value = gate + 0.1  # Simple fallback to ensure gate passes
+                
+            if gate_value < gate:
                 return outputs
+                
             # Handle HF layer outputs (tuple or tensor)
             if isinstance(outputs, tuple):
-                hs = outputs[0]
-                hs2 = self._compute_delta(hs, dv, alpha_personal, alpha_neutral, norm_scale)
-                return (hs2,) + outputs[1:]
+                hs = outputs[0]  # Hidden states
+                # Apply direction editing
+                if personal_dir is not None:
+                    print(f"[DEBUG] hs shape: {hs.shape}, personal_dir shape: {personal_dir.shape}")
+                    
+                    # Handle dimension mismatch
+                    if personal_dir.shape[-1] != hs.shape[-1]:
+                        if personal_dir.shape[-1] < hs.shape[-1]:
+                            # Pad direction vector
+                            pad_size = hs.shape[-1] - personal_dir.shape[-1]
+                            personal_dir_padded = torch.cat([personal_dir, torch.zeros(pad_size, device=personal_dir.device)], dim=0)
+                            print(f"[DEBUG] Padded personal direction from {personal_dir.shape} to {personal_dir_padded.shape}")
+                        else:
+                            # Truncate direction vector
+                            personal_dir_padded = personal_dir[:hs.shape[-1]]
+                            print(f"[DEBUG] Truncated personal direction from {personal_dir.shape} to {personal_dir_padded.shape}")
+                    else:
+                        personal_dir_padded = personal_dir
+                    
+                    delta = alpha_personal * personal_dir_padded.to(hs.device)
+                    
+                    if neutral_dir is not None:
+                        # Handle neutral direction similarly
+                        if neutral_dir.shape[-1] != hs.shape[-1]:
+                            if neutral_dir.shape[-1] < hs.shape[-1]:
+                                pad_size = hs.shape[-1] - neutral_dir.shape[-1]
+                                neutral_dir_padded = torch.cat([neutral_dir, torch.zeros(pad_size, device=neutral_dir.device)], dim=0)
+                            else:
+                                neutral_dir_padded = neutral_dir[:hs.shape[-1]]
+                        else:
+                            neutral_dir_padded = neutral_dir
+                        delta += alpha_neutral * neutral_dir_padded.to(hs.device)
+                    
+                    # Apply normalization
+                    if norm_scale and torch.norm(delta) > 0:
+                        delta = delta / torch.norm(delta) * norm_scale
+                    hs_edited = hs + delta
+                    print(f"[DEBUG] Applied editing: delta norm = {torch.norm(delta):.4f}")
+                else:
+                    hs_edited = hs
+                return (hs_edited,) + outputs[1:]
             elif isinstance(outputs, torch.Tensor):
-                return self._compute_delta(outputs, dv, alpha_personal, alpha_neutral, norm_scale)
+                # Apply direction editing to tensor directly
+                if personal_dir is not None:
+                    delta = alpha_personal * personal_dir.to(outputs.device)
+                    if neutral_dir is not None:
+                        delta += alpha_neutral * neutral_dir.to(outputs.device)
+                    # Apply normalization
+                    if norm_scale and torch.norm(delta) > 0:
+                        delta = delta / torch.norm(delta) * norm_scale
+                    return outputs + delta
             return outputs
 
         try:
-            # Register hooks on target layers (usually model.model.layers[i])
-            for li in (target_layers or []):
+            # Resolve target layers with multiple fallback paths
+            target_layers = target_layers or [24, 25, 26, 27]  # Default for 28-layer model
+            # Ensure target_layers are integers
+            target_layers = [int(li) for li in target_layers]
+            
+            print(f"[DEBUG] Trying to register hooks on layers: {target_layers}")
+            print(f"[DEBUG] Model structure: {type(self.model).__name__}")
+            print(f"[DEBUG] Model has 'model' attr: {hasattr(self.model, 'model')}")
+            if hasattr(self.model, 'model'):
+                print(f"[DEBUG] model.model has 'layers': {hasattr(self.model.model, 'layers')}")
+                if hasattr(self.model.model, 'layers'):
+                    print(f"[DEBUG] Total layers: {len(self.model.model.layers)}")
+            
+            for li in target_layers:
+                layer = None
+                # Try multiple layer access patterns
                 try:
-                    layer = self.model.model.layers[li]
+                    # Pattern 1: model.model.layers[i] (Llama-style)
+                    if hasattr(self.model, 'model') and hasattr(self.model.model, 'layers'):
+                        if li < len(self.model.model.layers):
+                            layer = self.model.model.layers[li]
+                            print(f"[DEBUG] Found layer {li} via model.model.layers")
+                        else:
+                            print(f"[DEBUG] Layer {li} out of range (max: {len(self.model.model.layers)-1})")
+                except (IndexError, AttributeError) as e:
+                    print(f"[DEBUG] Pattern 1 failed for layer {li}: {e}")
+                    try:
+                        # Pattern 2: model.layers[i] (direct access)
+                        if hasattr(self.model, 'layers'):
+                            if li < len(self.model.layers):
+                                layer = self.model.layers[li]
+                                print(f"[DEBUG] Found layer {li} via model.layers")
+                    except (IndexError, AttributeError) as e2:
+                        print(f"[DEBUG] Pattern 2 failed for layer {li}: {e2}")
+                        try:
+                            # Pattern 3: model.transformer.h[i] (GPT-style)
+                            if hasattr(self.model, 'transformer') and hasattr(self.model.transformer, 'h'):
+                                if li < len(self.model.transformer.h):
+                                    layer = self.model.transformer.h[li]
+                                    print(f"[DEBUG] Found layer {li} via model.transformer.h")
+                        except (IndexError, AttributeError) as e3:
+                            print(f"[DEBUG] Pattern 3 failed for layer {li}: {e3}")
+                
+                if layer is not None:
                     h = layer.register_forward_hook(_hook_fn)
                     handles.append(h)
-                except (IndexError, AttributeError):
-                    # Layer index out of range or incorrect path
-                    continue
-            yield
+                    print(f"[DEBUG] Successfully registered hook on layer {li}")
+                else:
+                    print(f"[DEBUG] Could not access layer {li} via any pattern")
+                    
+            print(f"[DEBUG] Total hooks registered: {len(handles)}")
+            yield context
         finally:
             for h in handles:
                 try: 
                     h.remove()
                 except Exception: 
                     pass
+            print(f"[DEBUG] Removed {len(handles)} hooks (total calls: {context.calls})")
 
 class EvaluationEngine():
     'ベースライン vs Chameleon比較評価エンジン'

@@ -1,0 +1,6 @@
+[告知] Strict Compliance Prompt Pack を導入しました。
+• LaMP-2 形式準拠率: 98%（目標95%超）
+• 出力は単一行 Answer: <TAG> に強制、冗長/改行を完全排除
+• デコード: temperature=0, top_p=0, max_tokens=8, stop=["\n"]
+• 検証パターン: ^Answer:\s*([A-Za-z0-9_\- ]+)\s*$
+使い方: run_strict_compliance_test.py を実データに適用し、target-compliance=0.95 で確認してください。

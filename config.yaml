@@ -1,69 +1,93 @@
+assets:
+  cfs_weights_path: graphrag_cfs_weights/cfs_pool.parquet
+  chameleon_weights_path: chameleon_prime_personalization/processed/LaMP-2/
+  embeddings_path: embeddings/lamp2_user_embeddings.npy
+  faiss_index_dir: faiss/lamp2_users_hnsw
+  ppr_path: ppr_results/ppr_topk.parquet
+causal_inference:
+  cache_causal_graphs: true
+  cache_dir: ./causal_cache
+  causal_discovery_alpha: 0.05
+  causality_radius: 86400.0
+  enabled: true
+  min_samples_for_causal_graph: 10
+  temporal_constraints: true
+  use_causal_mask: true
+cfs:
+  alpha_general: -0.05
+  alpha_personal: 0.4
+  enabled: true
+  max_contexts: 3
 chameleon:
-  # alpha_personal: 0.3
-  # alpha_general: -0.05
-  alpha_personal: 9
-  alpha_general: -5
-  num_self_generated: 10
-  # target_layers:
-  # - model.layers.14.mlp
-  target_layers: ["model.layers.20","model.layers.28","model.layers.30"]
-  theta_p_path: chameleon_prime_personalization/processed/LaMP-2/theta_p.npy
-  theta_n_path: chameleon_prime_personalization/processed/LaMP-2/theta_n.npy
-  direction_p_path: chameleon_prime_personalization/processed/LaMP-2/theta_p.npy
+  alpha_general: -0.05
+  alpha_personal: 0.4
   direction_n_path: chameleon_prime_personalization/processed/LaMP-2/theta_n.npy
+  direction_p_path: chameleon_prime_personalization/processed/LaMP-2/theta_p.npy
+  num_self_generated: 10
+  target_layers:
+  - model.layers.20
+  - model.layers.24
+  - model.layers.27
+  theta_n_path: chameleon_prime_personalization/processed/LaMP-2/theta_n.npy
+  theta_p_path: chameleon_prime_personalization/processed/LaMP-2/theta_p.npy
 data_sources:
   answers_backup: data/raw/LaMP_all/LaMP_2/user-based/dev/dev_outputs.json
   answers_primary: chameleon_prime_personalization/data/raw/LaMP-2/answers.json
   backup: data/raw/LaMP_all/LaMP_2/user-based/dev/dev_questions.json
   primary: chameleon_prime_personalization/data/raw/LaMP-2/merged.json
+diversity:
+  enabled: false
+  lambda: 0.3
+  max_per_cluster: 3
+  method: mmr
 evaluation:
-  max_users
-: 20
+  max_users: 20
   metrics:
   - exact_match
   - bleu_score
   save_predictions: true
+graphrag:
+  enabled: true
+  quantile_threshold: 0.8
+  use_ppr: true
+manifold:
+  convergence:
+    enable_monitoring: true
+    min_learning_rate: 1e-8
+    tolerance: 1e-6
+    window_size: 50
+  dimensions:
+    k: 128
+    n: 768
+  enabled: false
+  optimizer:
+    convergence_threshold: 1e-6
+    learning_rate: 0.001
+    max_iterations: 100
+    patience: 50
+    type: riemannian_adam
+  performance:
+    enable_comparison: true
+    theoretical_analysis: true
+    track_orthogonality: true
+  type: stiefel
 model:
   batch_size: 4
   device: cuda
+  generation:
+    default_mode: sampling
+    greedy:
+      do_sample: false
+      max_new_tokens: 10
+      temperature: 0.0
+    sampling:
+      do_sample: true
+      max_new_tokens: 10
+      temperature: 0.7
+      top_p: 0.9
   max_length: 512
-  name: meta-llama/Llama-3.2-3B-Instruct
+  name: ./chameleon_prime_personalization/models/base_model
   torch_dtype: float32
-
-# Asset paths for GraphRAG-CFS-Chameleon system
-assets:
-  # User embeddings for similarity search
-  embeddings_path: embeddings/lamp2_user_embeddings.npy
-  # FAISS index directory for fast retrieval
-  faiss_index_dir: faiss/lamp2_users_hnsw
-  # Personalized PageRank results
-  ppr_path: ppr_results/ppr_topk.parquet
-  # CFS collaborative weights
-  cfs_weights_path: graphrag_cfs_weights/cfs_pool.parquet
-  # Chameleon model weights (optional for legacy mode)
-  chameleon_weights_path: chameleon_prime_personalization/processed/LaMP-2/
-
-# Retrieval configuration
 retrieval:
-  top_k: 10
   similarity_threshold: 0.1
-
-# CFS (Collaborative Filtering System) configuration
-cfs:
-  enabled: true
-  max_contexts: 3
-  alpha_personal: 0.4
-  alpha_general: -0.05
-
-# Diversity selection configuration
-diversity:
-  enabled: false
-  method: mmr  # or cluster
-  lambda: 0.3
-  max_per_cluster: 3
-
-# GraphRAG configuration
-graphrag:
-  enabled: true
-  use_ppr: true
-  quantile_threshold: 0.8
+  top_k: 10

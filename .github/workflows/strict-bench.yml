@@ -1,0 +1,66 @@
+name: Strict Benchmark CI
+on:
+  push:
+    paths:
+      - 'tools/run_benchmark_lamp2.py'
+      - 'tools/preflight_priors.py'
+      - 'chameleon_prime_personalization/utils/prior_provider.py'
+  workflow_dispatch:
+
+jobs:
+  strict-validation:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+        
+    - name: Install dependencies
+      run: |
+        pip install torch transformers datasets
+        pip install -r requirements.txt
+        
+    - name: Preflight - Generate user priors
+      run: |
+        python tools/preflight_priors.py \
+          --dataset data/evaluation/lamp2_expanded_eval.jsonl \
+          --labels data/id2tag.txt \
+          --out data/user_priors.jsonl
+        echo "Generated $(wc -l < data/user_priors.jsonl) user priors"
+        
+    - name: Strict run (smoke test)
+      run: |
+        python tools/run_benchmark_lamp2.py \
+          --data_path data --split test --limit 5 --seed 42 \
+          --alpha_personal 2.75 --alpha_general -1.0 \
+          --norm_scale 0.9 --edit_gate_threshold 0.022 \
+          --mode id --calibrate \
+          --strict \
+          --prior_mode user \
+          --user_prior_path data/user_priors.jsonl \
+          --out_dir results/strict_smoke
+          
+    - name: Validate zero fallbacks
+      run: |
+        python tools/validate_strict_results.py results/strict_smoke/predictions.jsonl --verbose
+        
+    - name: Check all priors are user-sourced
+      run: |
+        UNIQUE_SOURCES=$(jq -r '.prior.source' results/strict_smoke/predictions.jsonl | sort | uniq)
+        echo "Prior sources found: $UNIQUE_SOURCES"
+        if [ "$UNIQUE_SOURCES" != "user" ]; then
+          echo "❌ FAIL: Found non-user prior sources"
+          exit 1
+        else
+          echo "✅ PASS: All priors from user sources"
+        fi
+        
+    - name: Archive results
+      uses: actions/upload-artifact@v3
+      with:
+        name: strict-benchmark-results
+        path: results/strict_smoke/

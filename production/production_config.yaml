@@ -1,0 +1,62 @@
+chameleon:
+  adaptive_alpha: false
+  alpha_general: -0.05
+  alpha_personal: 0.4
+  direction_n_path: chameleon_prime_personalization/processed/LaMP-2/theta_n.npy
+  direction_p_path: chameleon_prime_personalization/processed/LaMP-2/theta_p.npy
+  last_k_tokens: 0
+  num_self_generated: 10
+  target_layers:
+  - model.layers.20
+  - model.layers.27
+  theta_n_path: chameleon_prime_personalization/processed/LaMP-2/theta_n.npy
+  theta_p_path: chameleon_prime_personalization/processed/LaMP-2/theta_p.npy
+data_sources:
+  answers_backup: data/raw/LaMP_all/LaMP_2/user-based/dev/dev_outputs.json
+  answers_primary: chameleon_prime_personalization/data/raw/LaMP-2/answers.json
+  backup: data/raw/LaMP_all/LaMP_2/user-based/dev/dev_questions.json
+  primary: chameleon_prime_personalization/data/raw/LaMP-2/merged.json
+deployment_date: '20250829_200821'
+evaluation:
+  dataset_path: data/evaluation/lamp2_expanded_eval.jsonl
+  max_users: 70
+  metrics:
+  - exact_match
+  - bleu_score
+  - accuracy
+  - f1_score
+  sample_count: 140
+  save_predictions: true
+  significance_level: 0.05
+  statistical_validation: true
+model:
+  batch_size: 4
+  device: cuda
+  generation:
+    do_sample: false
+    max_new_tokens: 10
+    mode: greedy
+    pad_token_id: auto
+    temperature: null
+    top_p: null
+    use_cache: true
+  max_length: 512
+  name: ./chameleon_prime_personalization/models/base_model
+  torch_dtype: float32
+monitoring:
+  alert_thresholds:
+    max_inference_time: 120.0
+    min_accuracy: 0.3
+    min_hook_calls: 1
+  enable_diagnostics: true
+  log_edit_ratios: true
+  log_hook_calls: true
+  track_inference_time: true
+production:
+  backup_frequency: daily
+  cache_tokenization: true
+  enable_early_stopping: false
+  log_level: INFO
+  optimize_memory: true
+  save_results: true
+version: 3.0.0

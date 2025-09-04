@@ -1,0 +1,4 @@
+GATE | compliance=1.000 (>= 0.95) | quality=0.482 (>= 0.6) | FAIL
+- strict   : runs/rollout_20250818_151938/strict_report.json
+- ablation : runs/rollout_20250818_151938/ablation_study_report.json
+- log      : runs/rollout_20250818_151938/out.log

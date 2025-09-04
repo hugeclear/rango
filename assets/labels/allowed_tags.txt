@@ -1,14 +1,15 @@
-action
-adventure
-animation
-comedy
-crime
-drama
-family
-fantasy
-horror
-mystery
-romance
 sci-fi
-thriller
-western
+based on a book
+comedy
+action
+twist ending
+dystopia
+dark comedy
+classic
+psychology
+fantasy
+romance
+thought-provoking
+social commentary
+violence
+true story

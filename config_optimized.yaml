@@ -1,0 +1,16 @@
+chameleon:
+  alpha_general: -0.5
+  alpha_personal: 1.5
+  edit_gate_threshold: 0.03
+  norm_scale: 1.0
+  theta_vectors:
+    neutral: results/phase3c_theta_corrected/theta_n_lamp2_corrected.json
+    personal: results/phase3c_theta_corrected/theta_p_lamp2_corrected.json
+evaluation:
+  min_samples: 100
+  use_mcnemar: true
+generation:
+  do_sample: true
+  repetition_penalty: 1.1
+  temperature: 0.7
+  top_p: 0.9

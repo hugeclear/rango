@@ -1,0 +1,1 @@
+ROLLOUT(100) GATE | compliance=1.000 (>= 0.95) | quality=0.482 (>= 0.6) | FAIL

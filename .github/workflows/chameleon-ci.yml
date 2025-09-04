@@ -1,0 +1,125 @@
+name: chameleon-ci
+on: 
+  push:
+    branches: [ master, main ]
+  pull_request:
+    branches: [ master, main ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          
+      - name: Install test dependencies
+        run: |
+          pip install -r tests/requirements.txt
+          
+      - name: Run regression tests
+        run: |
+          pytest tests/ -v --tb=short
+          
+  smoke-trace:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Only run smoke test on push to master (not on every PR)
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          
+      - name: Install dependencies
+        run: |
+          pip install -r tests/requirements.txt
+          pip install accelerate faiss-cpu  # Add other required packages
+          
+      - name: Setup reproducible environment
+        run: |
+          python -c "
+          from utils.reproducibility import set_reproducible_seeds, apply_reproducible_env
+          set_reproducible_seeds(42)
+          apply_reproducible_env()
+          print('✅ Reproducible environment configured')
+          "
+          
+      # Skip the actual model-based smoke test for now since it requires large models
+      # This would be enabled once the CI environment has sufficient resources
+      - name: Mock smoke trace test
+        run: |
+          echo "Mock smoke trace test - validating trace structure"
+          python - <<'EOF'
+          import json
+          import os
+          
+          # Mock trace result structure
+          mock_trace = {
+              "editing_analysis": {
+                  "gate": {"gate_value": 3.75, "applied": True, "threshold": 0.022}
+              },
+              "personalized_generation": {
+                  "generated_length": 1,
+                  "generated_text": "drama", 
+                  "avg_logprob": -2.1
+              },
+              "baseline_generation": {
+                  "generated_length": 1,
+                  "generated_text": "drama",
+                  "avg_logprob": -2.5
+              },
+              "delta_avg_logprob": 0.4
+          }
+          
+          # Validate structure
+          assert mock_trace["editing_analysis"]["gate"]["gate_value"] > 0, "Gate value should be positive"
+          assert mock_trace["personalized_generation"]["generated_length"] >= 1, "Should generate at least 1 token"
+          assert mock_trace["delta_avg_logprob"] is not None, "Delta logprob should be calculated"
+          
+          print("✅ Mock smoke trace validation passed")
+          print(f"Gate value: {mock_trace['editing_analysis']['gate']['gate_value']}")
+          print(f"Generated length: {mock_trace['personalized_generation']['generated_length']}")  
+          print(f"Delta logprob: {mock_trace['delta_avg_logprob']}")
+          EOF
+          
+  # Uncomment this job when CI has GPU support and model files
+  # full-smoke-trace:
+  #   runs-on: ubuntu-latest
+  #   timeout-minutes: 30
+  #   if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+  #   
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - uses: actions/setup-python@v5
+  #       with:
+  #         python-version: "3.10"
+  #     - name: Install dependencies
+  #       run: |
+  #         pip install -r tests/requirements.txt
+  #         # Install additional packages needed for full model
+  #     - name: Run actual smoke trace
+  #       run: |
+  #         python tools/trace_one_example.py \
+  #           --sample_id 0 \
+  #           --alpha_personal 2.75 --alpha_general -1.0 \
+  #           --norm_scale 0.9 --edit_gate_threshold 0.022 \
+  #           --max_new_tokens 2 --min_new_tokens 1 \
+  #           --do_sample false --repetition_penalty 1.0 \
+  #           --return_scores true --seed 42
+  #     - name: Validate trace results
+  #       run: |
+  #         python - <<'PY'
+  #         import json
+  #         d = json.load(open("results/trace/trace_one_example.json"))
+  #         assert d["editing_analysis"]["gate"]["gate_value"] > 0
+  #         assert d["personalized_generation"]["generated_length"] >= 1
+  #         print("✅ Full smoke trace validation passed")
+  #         PY

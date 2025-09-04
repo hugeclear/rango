@@ -1,0 +1,15 @@
+[Unit]
+Description=Nightly LaMP-2 gate pipeline
+Wants=network-online.target
+After=network-online.target
+[Service]
+Type=simple
+WorkingDirectory=/home/nakata/master_thesis/rango
+EnvironmentFile=/home/nakata/master_thesis/rango/env/gate.env
+ExecStart=/bin/bash -lc 'SRC="$SRC" COMP_THRESH="$COMP_THRESH" QUAL_THRESH="$QUAL_THRESH" CANARY_N="${CANARY_N:-50}" scripts/run_gate_safe.sh'
+User=nakata
+Restart=no
+StandardOutput=append:/home/nakata/master_thesis/rango/rollout.nohup.log
+StandardError=append:/home/nakata/master_thesis/rango/rollout.nohup.log
+[Install]
+WantedBy=multi-user.target
